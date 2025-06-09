@@ -1,0 +1,8 @@
+*.jl.*.cov
+*.jl.cov
+*.jl.mem
+*Manifest.toml
+/output/
+/docs/build/
+*.nsys-rep
+*.sqlite
