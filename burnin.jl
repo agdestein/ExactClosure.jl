@@ -11,14 +11,11 @@ using StructuralClosure: NavierStokes
 using Turbulox
 using WGLMakie
 
-# case = NavierStokes.smallcase()
-case = NavierStokes.largecase()
+case = NavierStokes.smallcase()
+# case = NavierStokes.largecase()
 (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak) = case
 T = typeof(grid.L)
 
-poisson, ustart, cache = nothing, nothing, nothing
-GC.gc();
-CUDA.reclaim();
 poisson = poissonsolver(grid);
 ustart = Turbulox.randomfield_simple(
     Turbulox.energyprofile,
@@ -38,7 +35,7 @@ end
 u = ustart
 # u = VectorField(grid, copy(ustart.data));
 
-doplot = true
+doplot = false
 if doplot
     ut_obs = NavierStokes.plotsol(u, cache.p, viscosity)
 end

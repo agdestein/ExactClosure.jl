@@ -17,7 +17,7 @@ function smallcase()
     # T = Float32
     T = Float64
     grid = Grid(; ho = Val(1), L = T(1), n = 150, backend = get_backend())
-    viscosity = 1 / 3_000 |> T
+    viscosity = 0.3e-4 |> T
     outdir = joinpath(@__DIR__, "..", "output", "smallcase") |> mkpath
     datadir = joinpath(outdir, "data") |> mkpath
     plotdir = joinpath(outdir, "plots") |> mkpath
