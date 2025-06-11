@@ -48,7 +48,7 @@ function snelliuscase()
     T = Float64
     grid = Grid(; ho = Val(1), L = T(1), n = 800, backend = get_backend())
     viscosity = 1 / 10_000 |> T
-    outdir = joinpath(@__DIR__, "..", "output", "snelliuscase") |> mkpath
+    outdir = joinpath(ENV["DEEPDIP"], "StructuralClosure", "snelliuscase") |> mkpath
     datadir = joinpath(outdir, "data") |> mkpath
     plotdir = joinpath(outdir, "plots") |> mkpath
     amplitude = T(5e-2)
