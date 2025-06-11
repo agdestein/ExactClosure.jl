@@ -3,6 +3,8 @@ if false
     using .StructuralClosure
 end
 
+@info "Loading packages"
+
 using CairoMakie
 using CUDA
 using JLD2
@@ -11,11 +13,16 @@ using StructuralClosure: NavierStokes
 using Turbulox
 using WGLMakie
 
-case = NavierStokes.smallcase()
+@info "Loading case"
+
+# case = NavierStokes.smallcase()
 # case = NavierStokes.largecase()
+case = NavierStokes.snelliuscase()
 (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak) = case
 T = typeof(grid.L)
 
+ustart = cache = poisson = nothing
+GC.gc(); CUDA.reclaim()
 poisson = poissonsolver(grid);
 ustart = Turbulox.randomfield_simple(
     Turbulox.energyprofile,
@@ -40,6 +47,8 @@ if doplot
     ut_obs = NavierStokes.plotsol(u, cache.p, viscosity)
 end
 
+@info "Running burn-in"
+
 # Burn-in
 let
     t = 0.0 |> T
@@ -60,5 +69,7 @@ let
     end
     t
 end
+
+@info "Saving results"
 
 save_object(joinpath(outdir, "u.jld2"), u.data |> Array)

@@ -6,3 +6,5 @@
 /docs/build/
 *.nsys-rep
 *.sqlite
+*.un~
+*.swp

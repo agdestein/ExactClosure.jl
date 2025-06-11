@@ -41,6 +41,21 @@ function largecase()
     (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak)
 end
 
+"Large test case."
+function snelliuscase()
+    seed = 123
+    # T = Float32
+    T = Float64
+    grid = Grid(; ho = Val(1), L = T(1), n = 800, backend = get_backend())
+    viscosity = 1 / 10_000 |> T
+    outdir = joinpath(@__DIR__, "..", "output", "snelliuscase") |> mkpath
+    datadir = joinpath(outdir, "data") |> mkpath
+    plotdir = joinpath(outdir, "plots") |> mkpath
+    amplitude = T(5e-2)
+    kpeak = 5
+    (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak)
+end
+
 "Vorticity in the plane `Iz`."
 @kernel function vorticity!(ω, u, Iz)
     x, y = X(), Y()
