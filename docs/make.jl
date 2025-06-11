@@ -1,7 +1,12 @@
 using StructuralClosure
 using Documenter
 
-DocMeta.setdocmeta!(StructuralClosure, :DocTestSetup, :(using StructuralClosure); recursive = true)
+DocMeta.setdocmeta!(
+    StructuralClosure,
+    :DocTestSetup,
+    :(using StructuralClosure);
+    recursive = true,
+)
 
 makedocs(;
     modules = [StructuralClosure],

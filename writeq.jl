@@ -33,6 +33,9 @@ T = typeof(g_dns.L)
 @assert n_les * compression == g_dns.n
 plotdir = "~/Projects/StructuralErrorPaper/figures" |> expanduser
 
+poisson_dns = poissonsolver(g_dns);
+poisson_les = poissonsolver(g_les);
+
 ustart = let
     path = joinpath(outdir, "u.jld2")
     data = path |> load_object |> adapt(g_dns.backend)
@@ -111,26 +114,43 @@ boxplot(
     orientation = :vertical,
 )
 
-sfs = let
-    # return nothing
-    u = ustart
-    # u = sols.dns_ref
-    ru = TensorField(g_dns)
-    fru = TensorField(g_les)
-    fjru = TensorField(g_les)
-    fu = VectorField(g_les)
-    rfu = TensorField(g_les)
-    swapfil_sym = TensorField(g_les)
-    Turbulox.volumefilter!(fu, u, compression)
-    apply!(stresstensor!, g_dns, ru, u, viscosity)
-    apply!(stresstensor!, g_les, rfu, fu, viscosity)
-    Turbulox.volumefilter!(fru, ru, compression)
-    Turbulox.surfacefilter!(fjru, ru, compression, false)
-    classic = TensorField(g_les, fru.data - rfu.data)
-    swapfil = TensorField(g_les, fjru.data - rfu.data)
-    symmetrize!(swapfil_sym, swapfil)
-    (; classic, swapfil, swapfil_sym, rfu)
-end
+experiment = "volavg"
+sfs = NavierStokes.sfs_tensors_volume(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = false,
+);
+
+experiment = "project_volavg"
+sfs = NavierStokes.sfs_tensors_volume(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = true,
+);
+
+experiment = "surfavg"
+sfs = NavierStokes.sfs_tensors_surface(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = false,
+);
+
+plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
 
 false && let
     x, y, z = X(), Y(), Z()
@@ -146,15 +166,32 @@ true && let
     u = ustart
     # u = sols.dns_ref
     fu = VectorField(g_les)
+    if experiment == "volavg"
+        volumefilter!(fu, u, compression)
+    elseif experiment == "project_volavg"
+        volumefilter!(fu, u, compression)
+        p = ScalarField(g_les)
+        project!(fu, p, poisson_les)
+    elseif experiment == "surfavg"
+        surfacefilter!(fu, u, compression)
+    else
+        error("Unknown experiment: $experiment")
+    end
     Turbulox.volumefilter!(fu, u, compression)
     d_classic = ScalarField(g_les)
     d_swapfil = ScalarField(g_les)
-    d_swapfil_sym = ScalarField(g_les)
+    d_swapfil_symm = ScalarField(g_les)
     d_rfu = ScalarField(g_les)
-    apply!(Turbulox.tensordissipation_staggered!, g_les, d_classic, sfs.classic, fu)
-    apply!(Turbulox.tensordissipation_staggered!, g_les, d_swapfil, sfs.swapfil, fu)
-    apply!(Turbulox.tensordissipation_staggered!, g_les, d_swapfil_sym, sfs.swapfil_sym, fu)
-    apply!(Turbulox.tensordissipation_staggered!, g_les, d_rfu, sfs.rfu, fu)
+    apply!(Turbulox.tensordissipation_staggered!, g_les, d_classic, sfs.σ_classic, fu)
+    apply!(Turbulox.tensordissipation_staggered!, g_les, d_swapfil, sfs.σ_swapfil, fu)
+    apply!(
+        Turbulox.tensordissipation_staggered!,
+        g_les,
+        d_swapfil_symm,
+        sfs.σ_swapfil_symm,
+        fu,
+    )
+    # apply!(Turbulox.tensordissipation_staggered!, g_les, d_rfu, sfs.rfu, fu)
     fig = Figure(; size = (400, 300))
     # ax = Axis(fig[1, 1]; xticks = ([1, 2], ["Classic", "Filter-swap"]))
     ax = Axis(fig[1, 1]; xticks = (1:4, ["No-model", "Classic", "Swap-sym", "Swap"]))
@@ -179,8 +216,8 @@ true && let
     )
     boxplot!(
         ax,
-        fill(3, length(d_swapfil_sym)),
-        d_swapfil_sym.data |> vec |> Array;
+        fill(3, length(d_swapfil_symm)),
+        d_swapfil_symm.data |> vec |> Array;
         show_outliers = false,
         whiskerwidth = 0.2,
         orientation = :vertical,
@@ -205,6 +242,7 @@ true && let
     #     # label = "Filter-swap",
     # )
     save("$plotdir/ns-dissipation.pdf", fig; backend = CairoMakie)
+    @info "Saving to $plotdir/ns-dissipation.pdf"
     # ylims!(ax, -0.0005, 0.0005)
     fig
     # @show std(d_classic.data) std(d_swapfil.data)

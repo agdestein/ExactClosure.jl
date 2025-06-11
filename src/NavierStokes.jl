@@ -273,8 +273,7 @@ function dns_aid(; ustart, g_dns, g_les, poisson_dns, poisson_les, viscosity, co
     u, relerr
 end
 
-function dns_aid_surface(;
-    right_hand_side!,
+function dns_aid_volavg(;
     ustart,
     g_dns,
     g_les,
@@ -282,85 +281,15 @@ function dns_aid_surface(;
     poisson_les,
     viscosity,
     compression,
-)
-    cache_dns = (; du = VectorField(g_dns), p = ScalarField(g_dns))
-    cache_les = (; du = VectorField(g_les), p = ScalarField(g_les))
-    T = typeof(g_dns.L)
-    u = copy(ustart)
-    t = 0 |> T
-    cfl = 0.15 |> T
-    tstop = 0.3 |> T
-    r = TensorField(g_dns)
-    fr = TensorField(g_les)
-    fjr = TensorField(g_les)
-    fu = VectorField(g_les)
-    rfu = TensorField(g_les)
-    Turbulox.surfacefilter_vector!(fu, u, compression)
-    v_nomodel = copy(fu)
-    v_classic = copy(fu)
-    v_swapfil = copy(fu)
-    relerr = (; time = zeros(0), nomodel = zeros(0), classic = zeros(0), swapfil = zeros(0))
-    i = 0
-    while t < tstop
-        Δt = cfl * propose_timestep(u, viscosity)
-        Δt = min(Δt, tstop - t)
-        # Skip first iter to get initial errors
-        if i > 0
-            Turbulox.surfacefilter_vector!(fu, u, compression)
-            apply!(stresstensor!, r, u, viscosity)
-            apply!(stresstensor!, rfu, fu, viscosity)
-            Turbulox.surfacefilter_tensor!(fr, r, compression, false)
-            Turbulox.edgefilter_tensor!(fjr, r, compression, false)
-
-            # DNS
-            right_hand_side!(cache_dns.du, u)
-            fe_step!(cache_dns.du, u, cache_dns, Δt, poisson_dns)
-
-            # No-model
-            right_hand_side!(cache_les.du, v_nomodel)
-            fe_step!(cache_les.du, v_nomodel, cache_les, Δt, poisson_les)
-
-            # Classic
-            right_hand_side!(cache_les.du, v_classic)
-            @. fr = fr - rfu
-            apply!(tensordivergence!, g_les, cache_les.du, fr)
-            fe_step!(cache_les.du, v_classic, cache_les, Δt, poisson_les)
-
-            # Swap-filter
-            right_hand_side!(cache_les.du, v_swapfil)
-            @. fir = fir - rfu
-            apply!(tensordivergence!, g_les, cache_les.du, fir)
-            fe_step!(cache_les.du, v_swapfil, cache_les, Δt, poisson_les)
-
-            # Filtered DNS. Must be last! Otherwise it will modify the lazy
-            # tensors that depend on fu
-            Turbulox.surfacefilter_vector!(fu, u, compression)
-        end
-        if i % 1 == 0
-            push!(relerr.time, t)
-            push!(relerr.nomodel, norm(v_nomodel - fu) / norm(fu))
-            push!(relerr.classic, norm(v_classic - fu) / norm(fu))
-            push!(relerr.swapfil, norm(v_swapfil - fu) / norm(fu))
-        end
-        t += Δt
-        i += 1
-        @show t relerr.nomodel[end] relerr.classic[end] relerr.swapfil[end]
-    end
-    relerr
-end
-
-function dns_aid_pressure(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
+    doproject,
 )
     p_dns = ScalarField(g_dns)
+    p_les = ScalarField(g_les)
     du_dns = VectorField(g_dns)
     du_les = VectorField(g_les)
+    dσ_classic = VectorField(g_les)
+    dσ_swapfil = VectorField(g_les)
+    dσ_swapfil_symm = VectorField(g_les)
     x, y, z = X(), Y(), Z()
     T = typeof(g_dns.L)
     udns = VectorField(g_dns, copy(ustart.data))
@@ -370,8 +299,8 @@ function dns_aid_pressure(;
     fru = TensorField(g_les)
     firu = TensorField(g_les)
     fu = VectorField(g_les)
-    fip = (; x = ScalarField(g_les), y = ScalarField(g_les), z = ScalarField(g_les))
     Turbulox.volumefilter!(fu, udns, compression)
+    doproject && project!(fu, p_les, poisson_les)
     u = (;
         dns_ref = udns,
         dns_fil = fu,
@@ -391,93 +320,109 @@ function dns_aid_pressure(;
     while t < tstop
         # Skip first iter to get initial errors
         if i > 0
-            Turbulox.volumefilter!(fu, u.dns_ref, compression)
-            # apply!(stresstensor!, g_dns, ru, u.dns_ref, viscosity)
-            # apply!(stresstensor!, g_les, rfu, fu, viscosity)
-            ru = stresstensor(u.dns_ref, viscosity)
-            rfu = stresstensor(fu, viscosity)
-            Turbulox.volumefilter!(fru, ru, compression)
-            Turbulox.surfacefilter!(firu, ru, compression, false)
 
-            # DNS
+            # Time step from current DNS
             Δt = cfl * propose_timestep(u.dns_ref, viscosity)
             Δt = min(Δt, tstop - t)
+
+            # Sub-filter stress components
+            su = stresstensor(u.dns_ref, viscosity)
             fill!(du_dns.data, 0)
-            apply!(tensordivergence!, g_dns, du_dns, ru)
-            # right_hand_side!(du_dns, u.dns_ref; viscosity)
+            apply!(tensordivergence!, g_dns, du_dns, su)
             apply!(divergence!, g_dns, p_dns, du_dns)
             poissonsolve!(p_dns, poisson_dns)
             apply!(pressuregradient!, g_dns, du_dns, p_dns)
-            axpy!(Δt, du_dns.data, u.dns_ref.data)
-
-            # Filter pressure
-            Turbulox.surfacefilter!(fip.x, p_dns, compression, x)
-            Turbulox.surfacefilter!(fip.y, p_dns, compression, y)
-            Turbulox.surfacefilter!(fip.z, p_dns, compression, z)
-
-            # No-model
-            σ_nomodel = LazyTensorField(
-                g_les,
-                (ubar, fip, i, j, I) ->
-                    stress(ubar, viscosity, i, j, I) +
-                    (i == j == x) * fip.x[I] +
-                    (i == j == y) * fip.y[I] +
-                    (i == j == z) * fip.z[I],
-                u.nomodel,
-                fip,
-            )
+            @inline rukernel(u, p, viscosity, i, j, I) =
+                stress(u, viscosity, i, j, I) + (i == j) * p[I] # Inline this
+            ru = LazyTensorField(g_dns, rukernel, u.dns_ref, p_dns, viscosity)
+            Turbulox.volumefilter!(fru, ru, compression)
+            Turbulox.surfacefilter!(firu, ru, compression, false)
+            Turbulox.volumefilter!(fu, u.dns_ref, compression)
+            doproject && project!(fu, p_les, poisson_les)
+            sfu = stresstensor(fu, viscosity)
             fill!(du_les.data, 0)
-            apply!(tensordivergence!, g_les, du_les, σ_nomodel)
-            axpy!(Δt, du_les.data, u.nomodel.data)
-
-            # Classic
+            apply!(tensordivergence!, g_les, du_les, sfu)
+            apply!(divergence!, g_les, p_les, du_les)
+            poissonsolve!(p_les, poisson_les)
+            rfu = LazyTensorField(
+                g_les,
+                (u, p, viscosity, i, j, I) ->
+                    stress(u, viscosity, i, j, I) + (i == j) * p[I],
+                fu,
+                p_les,
+                viscosity,
+            )
             σ_classic = LazyTensorField(
                 g_les,
-                (ubar, fru, rfu, fip, i, j, I) ->
-                    stress(ubar, viscosity, i, j, I) + fru[i, j][I] - rfu[i, j][I] +
-                    (i == j == x) * fip.x[I] +
-                    (i == j == y) * fip.y[I] +
-                    (i == j == z) * fip.z[I],
-                u.classic,
+                (fru, rfu, i, j, I) -> fru[i, j][I] - rfu[i, j][I],
                 fru,
                 rfu,
-                fip,
             )
-            fill!(du_les.data, 0)
-            apply!(tensordivergence!, g_les, du_les, σ_classic)
-            axpy!(Δt, du_les.data, u.classic.data)
-
-            # Swap-filter
             σ_swapfil = LazyTensorField(
                 g_les,
-                (ubar, firu, rfu, fip, i, j, I) ->
-                    stress(ubar, viscosity, i, j, I) + firu[i, j][I] - rfu[i, j][I] +
-                    (i == j == x) * fip.x[I] +
-                    (i == j == y) * fip.y[I] +
-                    (i == j == z) * fip.z[I],
-                u.swapfil,
+                (firu, rfu, i, j, I) -> firu[i, j][I] - rfu[i, j][I],
                 firu,
                 rfu,
-                fip,
             )
-            fill!(du_les.data, 0)
-            apply!(tensordivergence!, g_les, du_les, σ_swapfil)
-            axpy!(Δt, du_les.data, u.swapfil.data)
-
-            # Swap-filter-symmetrized
             σ_swapfil_symm = LazyTensorField(
                 g_les,
                 (σ, i, j, I) -> (σ[i, j][I] + σ[j, i][I]) / 2,
                 σ_swapfil,
             )
+            fill!(dσ_classic.data, 0)
+            fill!(dσ_swapfil.data, 0)
+            fill!(dσ_swapfil_symm.data, 0)
+            apply!(tensordivergence!, g_les, dσ_classic, σ_classic)
+            apply!(tensordivergence!, g_les, dσ_swapfil, σ_swapfil)
+            apply!(tensordivergence!, g_les, dσ_swapfil_symm, σ_swapfil_symm)
+
+            # DNS step
+            axpy!(Δt, du_dns.data, u.dns_ref.data)
+
+            # No-model
+            σ_nomodel = LazyTensorField(
+                g_les,
+                (ubar, i, j, I) -> stress(ubar, viscosity, i, j, I),
+                u.nomodel,
+            )
             fill!(du_les.data, 0)
-            apply!(tensordivergence!, g_les, du_les, σ_swapfil_symm)
+            apply!(tensordivergence!, g_les, du_les, σ_nomodel)
+            project!(du_les, p_les, poisson_les)
+            axpy!(Δt, du_les.data, u.nomodel.data)
+            # This thing is already projected
+
+            # Classic
+            s = stresstensor(u.classic, viscosity)
+            fill!(du_les.data, 0)
+            apply!(tensordivergence!, g_les, du_les, s)
+            project!(du_les, p_les, poisson_les)
+            axpy!(Δt, du_les.data, u.classic.data)
+            axpy!(Δt, dσ_classic.data, u.classic.data) # closure
+            doproject && project!(u.classic, p_les, poisson_les)
+
+            # Swap-filter
+            s = stresstensor(u.swapfil, viscosity)
+            fill!(du_les.data, 0)
+            apply!(tensordivergence!, g_les, du_les, s)
+            project!(du_les, p_les, poisson_les)
+            axpy!(Δt, du_les.data, u.swapfil.data)
+            axpy!(Δt, dσ_swapfil.data, u.swapfil.data) # closure
+            doproject && project!(u.swapfil, p_les, poisson_les)
+
+            # Swap-filter-symmetrized
+            s = stresstensor(u.swapfil_symm, viscosity)
+            fill!(du_les.data, 0)
+            apply!(tensordivergence!, g_les, du_les, s)
+            project!(du_les, p_les, poisson_les)
             axpy!(Δt, du_les.data, u.swapfil_symm.data)
+            axpy!(Δt, dσ_swapfil_symm.data, u.swapfil_symm.data) # closure
+            doproject && project!(u.swapfil_symm, p_les, poisson_les)
 
             # Time
             t += Δt
         end
         Turbulox.volumefilter!(fu, u.dns_ref, compression)
+        doproject && project!(fu, p_les, poisson_les)
         push!(relerr.time, t)
         push!(relerr.nomodel, norm(u.nomodel.data - fu.data) / norm(fu.data))
         push!(relerr.classic, norm(u.classic.data - fu.data) / norm(fu.data))
@@ -487,7 +432,295 @@ function dns_aid_pressure(;
         @show t
     end
     Turbulox.volumefilter!(u.dns_fil, u.dns_ref, compression)
+    doproject && project!(u.dns_fil, p_les, poisson_les)
     u, relerr
+end
+
+function dns_aid_surface(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject,
+)
+    p_dns = ScalarField(g_dns)
+    p_les = ScalarField(g_les)
+    du_dns = VectorField(g_dns)
+    du_les = VectorField(g_les)
+    dσ_classic = VectorField(g_les)
+    dσ_swapfil = VectorField(g_les)
+    dσ_swapfil_symm = VectorField(g_les)
+    x, y, z = X(), Y(), Z()
+    T = typeof(g_dns.L)
+    udns = VectorField(g_dns, copy(ustart.data))
+    t = 0 |> T
+    cfl = 0.15 |> T
+    tstop = 0.1 |> T
+    firu = TensorField(g_les)
+    fijru = TensorField(g_les)
+    fiu = VectorField(g_les)
+    Turbulox.surfacefilter!(fiu, udns, compression)
+    u = (;
+        dns_ref = udns,
+        dns_fil = fiu,
+        nomodel = VectorField(g_les, copy(fiu.data)),
+        classic = VectorField(g_les, copy(fiu.data)),
+        swapfil = VectorField(g_les, copy(fiu.data)),
+        swapfil_symm = VectorField(g_les, copy(fiu.data)),
+    )
+    relerr = (;
+        time = zeros(0),
+        nomodel = zeros(0),
+        classic = zeros(0),
+        swapfil = zeros(0),
+        swapfil_symm = zeros(0),
+    )
+    i = 0
+    while t < tstop
+        # Skip first iter to get initial errors
+        if i > 0
+
+            # Time step from current DNS
+            Δt = cfl * propose_timestep(u.dns_ref, viscosity)
+            Δt = min(Δt, tstop - t)
+
+            # Sub-filter stress components
+            su = stresstensor(u.dns_ref, viscosity)
+            fill!(du_dns.data, 0)
+            apply!(tensordivergence!, g_dns, du_dns, su)
+            apply!(divergence!, g_dns, p_dns, du_dns)
+            poissonsolve!(p_dns, poisson_dns)
+            apply!(pressuregradient!, g_dns, du_dns, p_dns)
+            @inline rukernel(u, p, viscosity, i, j, I) =
+                stress(u, viscosity, i, j, I) + (i == j) * p[I] # Inline this
+            ru = LazyTensorField(g_dns, rukernel, u.dns_ref, p_dns, viscosity)
+            Turbulox.surfacefilter!(firu, ru, compression, true)
+            Turbulox.linefilter!(fijru, ru, compression)
+            # error()
+            Turbulox.surfacefilter!(fiu, u.dns_ref, compression)
+            sfiu = stresstensor(fiu, viscosity)
+            fill!(du_les.data, 0)
+            apply!(tensordivergence!, g_les, du_les, sfiu)
+            apply!(divergence!, g_les, p_les, du_les)
+            poissonsolve!(p_les, poisson_les)
+            rfiu = LazyTensorField(
+                g_les,
+                (u, p, viscosity, i, j, I) ->
+                    stress(u, viscosity, i, j, I) + (i == j) * p[I],
+                fiu,
+                p_les,
+                viscosity,
+            )
+            σ_classic = LazyTensorField(
+                g_les,
+                (firu, rfiu, i, j, I) -> firu[i, j][I] - rfiu[i, j][I],
+                firu,
+                rfiu,
+            )
+            σ_swapfil = LazyTensorField(
+                g_les,
+                (firu, fijru, rfiu, i, j, I) ->
+                    (i == j) * firu[i, j][I] + (i != j) * fijru[i, j][I] - rfiu[i, j][I],
+                firu,
+                fijru,
+                rfiu,
+            )
+            σ_swapfil_symm = LazyTensorField(
+                g_les,
+                (σ, i, j, I) -> (σ[i, j][I] + σ[j, i][I]) / 2,
+                σ_swapfil,
+            )
+            fill!(dσ_classic.data, 0)
+            fill!(dσ_swapfil.data, 0)
+            fill!(dσ_swapfil_symm.data, 0)
+            apply!(tensordivergence!, g_les, dσ_classic, σ_classic)
+            apply!(tensordivergence!, g_les, dσ_swapfil, σ_swapfil)
+            apply!(tensordivergence!, g_les, dσ_swapfil_symm, σ_swapfil_symm)
+
+            # DNS step
+            axpy!(Δt, du_dns.data, u.dns_ref.data)
+
+            # No-model
+            σ_nomodel = LazyTensorField(
+                g_les,
+                (ubar, i, j, I) -> stress(ubar, viscosity, i, j, I),
+                u.nomodel,
+            )
+            fill!(du_les.data, 0)
+            apply!(tensordivergence!, g_les, du_les, σ_nomodel)
+            project!(du_les, p_les, poisson_les)
+            axpy!(Δt, du_les.data, u.nomodel.data)
+            # This thing is already projected
+
+            # Classic
+            s = stresstensor(u.classic, viscosity)
+            fill!(du_les.data, 0)
+            apply!(tensordivergence!, g_les, du_les, s)
+            project!(du_les, p_les, poisson_les)
+            axpy!(Δt, du_les.data, u.classic.data)
+            axpy!(Δt, dσ_classic.data, u.classic.data) # closure
+            doproject && project!(u.classic, p_les, poisson_les)
+
+            # Swap-filter
+            s = stresstensor(u.swapfil, viscosity)
+            fill!(du_les.data, 0)
+            apply!(tensordivergence!, g_les, du_les, s)
+            project!(du_les, p_les, poisson_les)
+            axpy!(Δt, du_les.data, u.swapfil.data)
+            axpy!(Δt, dσ_swapfil.data, u.swapfil.data) # closure
+            doproject && project!(u.swapfil, p_les, poisson_les)
+
+            # Swap-filter-symmetrized
+            s = stresstensor(u.swapfil_symm, viscosity)
+            fill!(du_les.data, 0)
+            apply!(tensordivergence!, g_les, du_les, s)
+            project!(du_les, p_les, poisson_les)
+            axpy!(Δt, du_les.data, u.swapfil_symm.data)
+            axpy!(Δt, dσ_swapfil_symm.data, u.swapfil_symm.data) # closure
+            doproject && project!(u.swapfil_symm, p_les, poisson_les)
+
+            # Time
+            t += Δt
+        end
+        Turbulox.surfacefilter!(fiu, u.dns_ref, compression)
+        push!(relerr.time, t)
+        push!(relerr.nomodel, norm(u.nomodel.data - fiu.data) / norm(fiu.data))
+        push!(relerr.classic, norm(u.classic.data - fiu.data) / norm(fiu.data))
+        push!(relerr.swapfil, norm(u.swapfil.data - fiu.data) / norm(fiu.data))
+        push!(relerr.swapfil_symm, norm(u.swapfil_symm.data - fiu.data) / norm(fiu.data))
+        i += 1
+        @show t
+    end
+    Turbulox.surfacefilter!(u.dns_fil, u.dns_ref, compression)
+    u, relerr
+end
+
+function sfs_tensors_volume(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject,
+)
+    p_dns = ScalarField(g_dns)
+    p_les = ScalarField(g_les)
+    du_dns = VectorField(g_dns)
+    du_les = VectorField(g_les)
+    T = typeof(g_dns.L)
+    u = ustart
+    fru = TensorField(g_les)
+    firu = TensorField(g_les)
+    fu = VectorField(g_les)
+    Turbulox.volumefilter!(fu, u, compression)
+    doproject && project!(fu, p_les, poisson_les)
+
+    su = stresstensor(u, viscosity)
+    fill!(du_dns.data, 0)
+    apply!(tensordivergence!, g_dns, du_dns, su)
+    apply!(divergence!, g_dns, p_dns, du_dns)
+    poissonsolve!(p_dns, poisson_dns)
+    @inline rukernel(u, p, viscosity, i, j, I) =
+        stress(u, viscosity, i, j, I) + (i == j) * p[I] # Inline this
+    ru = LazyTensorField(g_dns, rukernel, u, p_dns, viscosity)
+    Turbulox.volumefilter!(fru, ru, compression)
+    Turbulox.surfacefilter!(firu, ru, compression, false)
+    Turbulox.volumefilter!(fu, u, compression)
+    doproject && project!(fu, p_les, poisson_les)
+    sfu = stresstensor(fu, viscosity)
+    fill!(du_les.data, 0)
+    apply!(tensordivergence!, g_les, du_les, sfu)
+    apply!(divergence!, g_les, p_les, du_les)
+    poissonsolve!(p_les, poisson_les)
+    rfu = LazyTensorField(
+        g_les,
+        (u, p, viscosity, i, j, I) -> stress(u, viscosity, i, j, I) + (i == j) * p[I],
+        fu,
+        p_les,
+        viscosity,
+    )
+    σ_classic =
+        LazyTensorField(g_les, (fru, rfu, i, j, I) -> fru[i, j][I] - rfu[i, j][I], fru, rfu)
+    σ_swapfil = LazyTensorField(
+        g_les,
+        (firu, rfu, i, j, I) -> firu[i, j][I] - rfu[i, j][I],
+        firu,
+        rfu,
+    )
+    σ_swapfil_symm =
+        LazyTensorField(g_les, (σ, i, j, I) -> (σ[i, j][I] + σ[j, i][I]) / 2, σ_swapfil)
+
+    (; σ_classic, σ_swapfil, σ_swapfil_symm)
+end
+
+function sfs_tensors_surface(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject,
+)
+    p_dns = ScalarField(g_dns)
+    p_les = ScalarField(g_les)
+    du_dns = VectorField(g_dns)
+    du_les = VectorField(g_les)
+    T = typeof(g_dns.L)
+    u = ustart
+    firu = TensorField(g_les)
+    fijru = TensorField(g_les)
+    fiu = VectorField(g_les)
+    Turbulox.surfacefilter!(fiu, u, compression)
+
+    # Sub-filter stress components
+    su = stresstensor(u, viscosity)
+    fill!(du_dns.data, 0)
+    apply!(tensordivergence!, g_dns, du_dns, su)
+    apply!(divergence!, g_dns, p_dns, du_dns)
+    poissonsolve!(p_dns, poisson_dns)
+    @inline rukernel(u, p, viscosity, i, j, I) =
+        stress(u, viscosity, i, j, I) + (i == j) * p[I] # Inline this
+    ru = LazyTensorField(g_dns, rukernel, u, p_dns, viscosity)
+    surfacefilter!(firu, ru, compression, true)
+    linefilter!(fijru, ru, compression)
+    surfacefilter!(fiu, u, compression)
+    sfiu = stresstensor(fiu, viscosity)
+    fill!(du_les.data, 0)
+    apply!(tensordivergence!, g_les, du_les, sfiu)
+    apply!(divergence!, g_les, p_les, du_les)
+    poissonsolve!(p_les, poisson_les)
+    rfiu = LazyTensorField(
+        g_les,
+        (u, p, viscosity, i, j, I) -> stress(u, viscosity, i, j, I) + (i == j) * p[I],
+        fiu,
+        p_les,
+        viscosity,
+    )
+    σ_classic = LazyTensorField(
+        g_les,
+        (firu, rfiu, i, j, I) -> firu[i, j][I] - rfiu[i, j][I],
+        firu,
+        rfiu,
+    )
+    σ_swapfil = LazyTensorField(
+        g_les,
+        (firu, fijru, rfiu, i, j, I) ->
+            (i == j) * firu[i, j][I] + (i != j) * fijru[i, j][I] - rfiu[i, j][I],
+        firu,
+        fijru,
+        rfiu,
+    )
+    σ_swapfil_symm =
+        LazyTensorField(g_les, (σ, i, j, I) -> (σ[i, j][I] + σ[j, i][I]) / 2, σ_swapfil)
+
+    (; σ_classic, σ_swapfil, σ_swapfil_symm)
 end
 
 end

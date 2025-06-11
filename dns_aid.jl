@@ -20,11 +20,11 @@ begin
     compression = 3
 end
 
-# begin
-#     case = NavierStokes.largecase()
-#     n_les = 100
-#     compression = 5
-# end
+begin
+    case = NavierStokes.largecase()
+    n_les = 100
+    compression = 5
+end
 
 (; viscosity, outdir, datadir, plotdir, seed) = case
 g_dns = case.grid
@@ -41,20 +41,71 @@ ustart = let
     VectorField(g_dns, data)
 end
 
-experiment = "volume-own-pressure"
-sols, relerr =
-    NavierStokes.dns_aid(; ustart, g_dns, g_les, poisson_dns, poisson_les, viscosity, compression);
+# experiment = "volume-own-pressure"
+# sols, relerr = NavierStokes.dns_aid(;
+#     ustart,
+#     g_dns,
+#     g_les,
+#     poisson_dns,
+#     poisson_les,
+#     viscosity,
+#     compression,
+# );
 
-experiment = "volume-dns-pressure"
-sols, relerr =
-    NavierStokes.dns_aid_pressure(; ustart, g_dns, g_les, poisson_dns, poisson_les, viscosity, compression);
+# experiment = "volume-dns-pressure"
+# sols, relerr = NavierStokes.dns_aid_pressure(;
+#     ustart,
+#     g_dns,
+#     g_les,
+#     poisson_dns,
+#     poisson_les,
+#     viscosity,
+#     compression,
+# );
+
+experiment = "volavg"
+sols, relerr = NavierStokes.dns_aid_volavg(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = false,
+);
+
+experiment = "project_volavg"
+sols, relerr = NavierStokes.dns_aid_volavg(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = true,
+);
+
+experiment = "surfavg"
+sols, relerr = NavierStokes.dns_aid_surface(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = true,
+);
 
 plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
 
 (;
     nomodel = norm(sols.nomodel.data - sols.dns_fil.data) / norm(sols.dns_fil.data),
     classic = norm(sols.classic.data - sols.dns_fil.data) / norm(sols.dns_fil.data),
-    swapfil_symm = norm(sols.swapfil_symm.data - sols.dns_fil.data) / norm(sols.dns_fil.data),
+    swapfil_symm = norm(sols.swapfil_symm.data - sols.dns_fil.data) /
+                   norm(sols.dns_fil.data),
     swapfil = norm(sols.swapfil.data - sols.dns_fil.data) / norm(sols.dns_fil.data),
 ) |> pairs
 
@@ -101,8 +152,9 @@ let
         framevisible = false,
     )
     rowgap!(fig.layout, 5)
-    ylims!(ax, -0.03, 0.34)
-    # save("$(plotdir)/ns-error.pdf", fig; backend = CairoMakie, size = (400, 330))
+    # ylims!(ax, -0.03, 0.34)
+    save("$(plotdir)/ns-error.pdf", fig; backend = CairoMakie, size = (400, 330))
+    @info "Saving to $plotdir/ns-error.pdf"
     fig
 end
 
@@ -169,7 +221,7 @@ let
     specs = (; specs..., kolmogo = (; k = xslope, s = yslope))
     fig = Figure()
     ax_full = Makie.Axis(fig[1, 1]; xscale = log2, yscale = log10, xlabel = "Wavenumber")
-    o = 12
+    o = 10
     ax_zoom = zoom!(
         fig[1, 1],
         ax_full;
@@ -180,13 +232,13 @@ let
         relheight = 0.55,
     )
     for (key, label, color, linestyle) in [
-        (:dns_ref, "DNS", Cycled(1), :solid),
-        (:dns_fil, "Filtered DNS", Cycled(1), :dash),
-        (:kolmogo, "Kolmogorov", Cycled(1), :dot),
         (:nomodel, "No-model", Cycled(2), :solid),
         (:classic, "Classic", Cycled(3), :solid),
         (:swapfil, "Swap", Cycled(4), :solid),
         (:swapfil_symm, "Swap-sym", Cycled(5), :solid),
+        (:dns_ref, "DNS", Cycled(1), :solid),
+        (:dns_fil, "Filtered DNS", Cycled(1), :dash),
+        (:kolmogo, "Kolmogorov", Cycled(1), :dot),
     ]
         spec = specs[key]
         lines!(ax_full, Point2f.(spec.k, spec.s); color, linestyle, label)
@@ -209,6 +261,7 @@ let
     # vlines!(ax_full, 150)
     # ylims!(ax_full, 1e-4, 1e-1)
     rowgap!(fig.layout, 5)
-    # save("$plotdir/ns-spectra.pdf", fig; backend = CairoMakie, size = (400, 380))
+    save("$plotdir/ns-spectra.pdf", fig; backend = CairoMakie, size = (400, 380))
+    @info "Saving to $plotdir/ns-spectra.pdf"
     fig
 end
