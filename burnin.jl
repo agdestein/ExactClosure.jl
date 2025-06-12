@@ -3,7 +3,15 @@ if false
     using .StructuralClosure
 end
 
-@info "Loading packages"
+# For getting logging without delay on SLURM
+macro flushinfo(msg)
+    esc(quote
+        @info $msg
+        flush(stderr)
+    end)
+end
+
+@flushinfo "Loading packages"
 
 using CairoMakie
 using CUDA
@@ -13,16 +21,18 @@ using StructuralClosure: NavierStokes
 using Turbulox
 using WGLMakie
 
-@info "Loading case"
+@flushinfo "Loading case"
 
 # case = NavierStokes.smallcase()
 # case = NavierStokes.largecase()
-case = NavierStokes.snelliuscase()
+case = NavierStokes.newcase()
+# case = NavierStokes.snelliuscase()
 (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak) = case
 T = typeof(grid.L)
 
-ustart = cache = poisson = nothing
-GC.gc(); CUDA.reclaim()
+ut_obs = u = ustart = cache = poisson = nothing
+GC.gc();
+CUDA.reclaim();
 poisson = poissonsolver(grid);
 ustart = Turbulox.randomfield_simple(
     Turbulox.energyprofile,
@@ -42,18 +52,18 @@ end
 u = ustart
 # u = VectorField(grid, copy(ustart.data));
 
-doplot = false
+doplot = true
 if doplot
     ut_obs = NavierStokes.plotsol(u, cache.p, viscosity)
 end
 
-@info "Running burn-in"
+@flushinfo "Running burn-in"
 
 # Burn-in
 let
     t = 0.0 |> T
     cfl = 0.85 |> T
-    tstop = 0.4 |> T
+    tstop = 0.3 |> T
     i = 0
     while t < tstop
         i += 1
@@ -61,7 +71,14 @@ let
         Δt = min(Δt, tstop - t)
         timestep!(right_hand_side!, u, cache, Δt, poisson; viscosity)
         t += Δt
-        @info "t = $t,\tumax = $(maximum(abs, u.data))"
+        @flushinfo join(
+            [
+                "t = $(round(t; sigdigits = 4))",
+                "Δt = $(round(Δt; sigdigits = 4))",
+                "umax = $(round(maximum(abs, u.data); sigdigits = 4))",
+            ],
+            ",\t",
+        )
         if doplot && i % 5 == 0
             setindex!(ut_obs, (; u, t))
             sleep(0.01)
@@ -70,6 +87,11 @@ let
     t
 end
 
-@info "Saving results"
+let
+    hu = 1
+    @flushinfo "hu = $hu,\tumax = $(maximum(abs, u.data))"
+end
 
-save_object(joinpath(outdir, "u.jld2"), u.data |> Array)
+file = joinpath(outdir, "u.jld2")
+@flushinfo "Saving final velocity field to $file"
+save_object(file, u.data |> Array)

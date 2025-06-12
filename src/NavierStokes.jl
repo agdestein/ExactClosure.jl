@@ -42,6 +42,21 @@ function largecase()
 end
 
 "Large test case."
+function newcase()
+    seed = 123
+    # T = Float32
+    T = Float64
+    grid = Grid(; ho = Val(1), L = T(1), n = 500, backend = get_backend())
+    viscosity = 1 / 20_000 |> T
+    outdir = joinpath(@__DIR__, "..", "output", "newcase") |> mkpath
+    datadir = joinpath(outdir, "data") |> mkpath
+    plotdir = joinpath(outdir, "plots") |> mkpath
+    amplitude = T(5e-2)
+    kpeak = 5
+    (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak)
+end
+
+"Large test case."
 function snelliuscase()
     seed = 123
     # T = Float32
