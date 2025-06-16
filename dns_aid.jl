@@ -4,7 +4,7 @@ if false
 end
 
 @info "Loading packages"
-flush(stdout)
+flush(stderr)
 
 using Adapt
 using CairoMakie
@@ -18,7 +18,7 @@ using Turbulox
 using WGLMakie
 
 @info "Loading case"
-flush(stdout)
+flush(stderr)
 
 # begin
 #     case = NavierStokes.smallcase()
@@ -54,19 +54,19 @@ ustart = let
 end
 
 @info "Running experiment"
-flush(stdout)
+flush(stderr)
 
-experiment = "volavg"
-sols, relerr = NavierStokes.dns_aid_volavg(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = false,
-);
+# experiment = "volavg"
+# sols, relerr = NavierStokes.dns_aid_volavg(;
+#     ustart,
+#     g_dns,
+#     g_les,
+#     poisson_dns,
+#     poisson_les,
+#     viscosity,
+#     compression,
+#     doproject = false,
+# );
 
 # experiment = "project_volavg"
 # sols, relerr = NavierStokes.dns_aid_volavg(;
@@ -80,22 +80,22 @@ sols, relerr = NavierStokes.dns_aid_volavg(;
 #     doproject = true,
 # );
 
-# experiment = "surfavg"
-# sols, relerr = NavierStokes.dns_aid_surface(;
-#     ustart,
-#     g_dns,
-#     g_les,
-#     poisson_dns,
-#     poisson_les,
-#     viscosity,
-#     compression,
-#     doproject = true,
-# );
+experiment = "surfavg"
+sols, relerr = NavierStokes.dns_aid_surface(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = true,
+);
 
 # plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
 
 @info "Saving results"
-flush(stdout)
+flush(stderr)
 
 jldsave(joinpath(datadir, "$(experiment)_relerr.jld2"); relerr)
 
@@ -152,6 +152,7 @@ let
     # ylims!(ax, -0.03, 0.34)
     file = joinpath(plotdir, "$(experiment)_ns-error.pdf")
     @info "Saving error plot to $file"
+    flush(stderr)
     save(file, fig; backend = CairoMakie, size = (400, 330))
     fig
 end
@@ -206,6 +207,7 @@ let
     rowgap!(fig.layout, 5)
     file = joinpath(plotdir, "$(experiment)_ns-spectra.pdf")
     @info "Saving spectrum plot to $file"
+    flush(stderr)
     save(file, fig; backend = CairoMakie, size = (400, 380))
     fig
 end

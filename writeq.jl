@@ -3,6 +3,9 @@ if false
     using .StructuralClosure
 end
 
+@info "Loading packages"
+flush(stderr)
+
 using Adapt
 using CairoMakie
 using CUDA
@@ -14,15 +17,24 @@ using Turbulox
 using WGLMakie
 using WriteVTK
 
+@info "Loading case"
+flush(stderr)
+
 # begin
 #     case = NavierStokes.smallcase()
 #     n_les = 50
 #     compression = 3
 # end
 
+# begin
+#     case = NavierStokes.largecase()
+#     n_les = 100
+#     compression = 5
+# end
+
 begin
-    case = NavierStokes.largecase()
-    n_les = 100
+    case = NavierStokes.snelliuscase()
+    n_les = 160
     compression = 5
 end
 
@@ -31,7 +43,8 @@ g_dns = case.grid
 g_les = Grid(; g_dns.ho, g_dns.backend, g_dns.L, n = n_les)
 T = typeof(g_dns.L)
 @assert n_les * compression == g_dns.n
-plotdir = "~/Projects/StructuralErrorPaper/figures" |> expanduser
+
+# plotdir = "~/Projects/StructuralErrorPaper/figures" |> expanduser
 
 poisson_dns = poissonsolver(g_dns);
 poisson_les = poissonsolver(g_les);
@@ -62,6 +75,8 @@ false && let
 end
 
 false && let
+    @info "Computing Q-criterion"
+    flush(stderr)
     u = ustart
     (; grid) = u
     n = div(compression, 2) + 1
@@ -81,7 +96,10 @@ false && let
     apply!(Turbulox.compute_q!, grid, qfu, ∇fu)
     apply!(Turbulox.compute_q!, grid, qfu_coarse, ∇fu_coarse)
     x = get_axis(u.grid, Coll())
-    vtk_grid("$outdir/q", x, x, x) do vtk
+    file = joinpath(outdir, "data", "q")
+    @info "Writing Q to $file"
+    flush(stderr)
+    vtk_grid(file, x, x, x) do vtk
         vtk["Qh(u)"] = qu.data |> Array
         vtk["Qh(ubar)"] = qfu.data |> Array
         vtk["QH(ubar)"] = qfu_coarse.data |> Array
@@ -106,37 +124,40 @@ false && let
     )
 end
 
-boxplot(
-    fill(1, 1),
-    zeros(1);
-    show_outliers = false,
-    whiskerwidth = 0.2,
-    orientation = :vertical,
-)
+# boxplot(
+#     fill(1, 1),
+#     zeros(1);
+#     show_outliers = false,
+#     whiskerwidth = 0.2,
+#     orientation = :vertical,
+# )
 
-experiment = "volavg"
-sfs = NavierStokes.sfs_tensors_volume(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = false,
-);
+@info "Computing SFS tensors"
+flush(stderr)
 
-experiment = "project_volavg"
-sfs = NavierStokes.sfs_tensors_volume(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = true,
-);
+# experiment = "volavg"
+# sfs = NavierStokes.sfs_tensors_volume(;
+#     ustart,
+#     g_dns,
+#     g_les,
+#     poisson_dns,
+#     poisson_les,
+#     viscosity,
+#     compression,
+#     doproject = false,
+# );
+
+# experiment = "project_volavg"
+# sfs = NavierStokes.sfs_tensors_volume(;
+#     ustart,
+#     g_dns,
+#     g_les,
+#     poisson_dns,
+#     poisson_les,
+#     viscosity,
+#     compression,
+#     doproject = true,
+# );
 
 experiment = "surfavg"
 sfs = NavierStokes.sfs_tensors_surface(;
@@ -150,7 +171,7 @@ sfs = NavierStokes.sfs_tensors_surface(;
     doproject = false,
 );
 
-plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
+# plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
 
 false && let
     x, y, z = X(), Y(), Z()
@@ -241,8 +262,10 @@ true && let
     #     orientation = :vertical,
     #     # label = "Filter-swap",
     # )
-    save("$plotdir/ns-dissipation.pdf", fig; backend = CairoMakie)
-    @info "Saving to $plotdir/ns-dissipation.pdf"
+    file = joinpath(plotdir, "$(experiment)-ns-dissipation.pdf")
+    @info "Saving dissipation plot to $file"
+    flush(stderr)
+    save(file, fig; backend = CairoMakie)
     # ylims!(ax, -0.0005, 0.0005)
     fig
     # @show std(d_classic.data) std(d_swapfil.data)

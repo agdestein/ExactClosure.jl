@@ -298,6 +298,7 @@ function dns_aid(; ustart, g_dns, g_les, poisson_dns, poisson_les, viscosity, co
         )
         i += 1
         @show t
+        flush(stdout)
     end
     Turbulox.volumefilter!(u.dns_fil, u.dns_ref, compression)
     u, relerr
@@ -460,6 +461,7 @@ function dns_aid_volavg(;
         push!(relerr.swapfil_symm, norm(u.swapfil_symm.data - fu.data) / norm(fu.data))
         i += 1
         @show t
+        flush(stdout)
     end
     Turbulox.volumefilter!(u.dns_fil, u.dns_ref, compression)
     doproject && project!(u.dns_fil, p_les, poisson_les)
@@ -623,6 +625,7 @@ function dns_aid_surface(;
         push!(relerr.swapfil_symm, norm(u.swapfil_symm.data - fiu.data) / norm(fiu.data))
         i += 1
         @show t
+        flush(stdout)
     end
     Turbulox.surfacefilter!(u.dns_fil, u.dns_ref, compression)
     u, relerr
