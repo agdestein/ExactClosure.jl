@@ -50,5 +50,4 @@ function zoombox!(subfig, ax1; point, logx, logy, relwidth, relheight)
     ax2
 end
 
-
 end

@@ -10,6 +10,7 @@ using Adapt
 using CairoMakie
 using CUDA
 using JLD2
+using KernelDensity
 using LinearAlgebra
 using Random
 using StructuralClosure: NavierStokes
@@ -21,17 +22,17 @@ using WriteVTK
 @info "Loading case"
 flush(stderr)
 
-begin
-    case = NavierStokes.smallcase()
-    n_les = 50
-    compression = 3
-end
-
 # begin
-#     case = NavierStokes.largecase()
-#     n_les = 100
-#     compression = 5
+#     case = NavierStokes.smallcase()
+#     n_les = 50
+#     compression = 3
 # end
+
+begin
+    case = NavierStokes.largecase()
+    n_les = 100
+    compression = 5
+end
 
 # begin
 #     case = NavierStokes.snelliuscase()
@@ -148,34 +149,33 @@ sfs = NavierStokes.sfs_tensors_volume(;
     doproject = false,
 );
 
-# experiment = "project_volavg"
-# sfs = NavierStokes.sfs_tensors_volume(;
-#     ustart,
-#     g_dns,
-#     g_les,
-#     poisson_dns,
-#     poisson_les,
-#     viscosity,
-#     compression,
-#     doproject = true,
-# );
+experiment = "project_volavg"
+sfs = NavierStokes.sfs_tensors_volume(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = true,
+);
 
-# experiment = "surfavg"
-# sfs = NavierStokes.sfs_tensors_surface(;
-#     ustart,
-#     g_dns,
-#     g_les,
-#     poisson_dns,
-#     poisson_les,
-#     viscosity,
-#     compression,
-#     doproject = false,
-# );
+experiment = "surfavg"
+sfs = NavierStokes.sfs_tensors_surface(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = false,
+);
 
 # plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
 
 true && let
-    using Turbulox.KernelAbstractions
     u = ustart
     fu = VectorField(g_les)
     if experiment == "volavg"
@@ -198,7 +198,8 @@ true && let
     end
     apply!(getfrac!, g_les, xy, sfs.σ_swapfil, sfs.σ_swapfil_symm)
     xy.data
-    1 - sum(xy.data) / length(xy.data)
+    frac = 1 - sum(xy.data) / length(xy.data)
+    round(frac; sigdigits = 3)
 end
 
 false && let
@@ -211,7 +212,7 @@ false && let
     # norm(1.0*sfs.classic.data - sfs.swapfil.data) / norm(sfs.swapfil.data)
 end
 
-true && let
+diss = let
     u = ustart
     # u = sols.dns_ref
     fu = VectorField(g_les)
@@ -226,75 +227,143 @@ true && let
     else
         error("Unknown experiment: $experiment")
     end
-    d_classic = ScalarField(g_les)
-    d_swapfil = ScalarField(g_les)
-    d_swapfil_symm = ScalarField(g_les)
-    d_rfu = ScalarField(g_les)
-    apply!(Turbulox.tensordissipation_staggered!, g_les, d_classic, sfs.σ_classic, fu)
-    apply!(Turbulox.tensordissipation_staggered!, g_les, d_swapfil, sfs.σ_swapfil, fu)
+    diss = (;
+        classic = ScalarField(g_les),
+        swapfil = ScalarField(g_les),
+        swapfil_symm = ScalarField(g_les),
+        # rfu = ScalarField(g_les),
+    )
+    apply!(Turbulox.tensordissipation_staggered!, g_les, diss.classic, sfs.σ_classic, fu)
+    apply!(Turbulox.tensordissipation_staggered!, g_les, diss.swapfil, sfs.σ_swapfil, fu)
     apply!(
         Turbulox.tensordissipation_staggered!,
         g_les,
-        d_swapfil_symm,
+        diss.swapfil_symm,
         sfs.σ_swapfil_symm,
         fu,
     )
-    # apply!(Turbulox.tensordissipation_staggered!, g_les, d_rfu, sfs.rfu, fu)
+    # apply!(Turbulox.tensordissipation_staggered!, g_les, diss.rfu, sfs.rfu, fu)
+    diss
+end
+
+true && let
     fig = Figure(; size = (400, 300))
     # ax = Axis(fig[1, 1]; xticks = ([1, 2], ["Classic", "Filter-swap"]))
     ax = Axis(fig[1, 1]; xticks = (1:4, ["No-model", "Classic", "Swap-sym", "Swap"]))
     # ax = Axis(fig[1, 1]; xticks = ([1, 2, 3], ["Classic", "Filter-swap", "Stress"]))
-    boxplot!(
+    plot(i, d) = boxplot!(
         ax,
-        fill(1, 1),
-        zeros(1);
+        fill(i, length(d)),
+        d;
         show_outliers = false,
         whiskerwidth = 0.2,
         orientation = :vertical,
-        # label = "Classic",
     )
-    boxplot!(
-        ax,
-        fill(2, length(d_classic)),
-        d_classic.data |> vec |> Array;
-        show_outliers = false,
-        whiskerwidth = 0.2,
-        orientation = :vertical,
-        # label = "Classic",
-    )
-    boxplot!(
-        ax,
-        fill(3, length(d_swapfil_symm)),
-        d_swapfil_symm.data |> vec |> Array;
-        show_outliers = false,
-        whiskerwidth = 0.2,
-        orientation = :vertical,
-        # label = "Filter-swap",
-    )
-    boxplot!(
-        ax,
-        fill(4, length(d_swapfil)),
-        d_swapfil.data |> vec |> Array;
-        show_outliers = false,
-        whiskerwidth = 0.2,
-        orientation = :vertical,
-        # label = "Filter-swap",
-    )
-    # boxplot!(
-    #     ax,
-    #     fill(3, length(d_rfu)),
-    #     d_rfu.data |> vec |> Array;
-    #     show_outliers = false,
-    #     whiskerwidth = 0.2,
-    #     orientation = :vertical,
-    #     # label = "Filter-swap",
-    # )
+    plot(1, zeros(1))
+    plot(2, diss.classic.data |> vec |> Array)
+    plot(3, diss.swapfil_symm.data |> vec |> Array)
+    plot(4, diss.swapfil.data |> vec |> Array)
+    # plot(5, diss.rfu.data |> vec |> Array)
     file = joinpath(plotdir, "$(experiment)-ns-dissipation.pdf")
     @info "Saving dissipation plot to $file"
     flush(stderr)
     save(file, fig; backend = CairoMakie)
     # ylims!(ax, -0.0005, 0.0005)
     fig
-    # @show std(d_classic.data) std(d_swapfil.data)
-    # d_swapfil.data |> vec |> Array;
+end
+
+true && let
+    fig = Figure(; size = (400, 330))
+    ax = Axis(fig[1, 1]; yscale = log10,
+        xlabel = "Dissipation",
+    )
+    xlims!(ax, -17, 12)
+    ylims!(ax, 1e-5, 4e-1)
+    plot(i, d, label) = hist!(
+        ax,
+        d;
+        # bins = 100,
+        bins = range(-17, 12, 100),
+        normalization = :probability,
+        # strokewidth = 1,
+        # color = Cycled(i),
+        color = Makie.wong_colors()[i],
+        label,
+    )
+    # plot(d) = density!(ax, d; npoints = 500, strokewidth = 1)
+    plot(4, diss.swapfil.data |> vec |> Array, "Swap")
+    plot(3, diss.swapfil_symm.data |> vec |> Array, "Swap-sym")
+    plot(2, diss.classic.data |> vec |> Array, "Classic")
+    # plot(4, 3e-2 * randn(length(diss.classic.data)), "No-model")
+    vlines!(ax, [0], color = Cycled(1), label = "No-model")
+    # plot(5, diss.rfu.data |> vec |> Array)
+    Legend(
+        fig[0, 1],
+        ax;
+        tellwidth = false,
+        orientation = :horizontal,
+        # nbanks = 2,
+        framevisible = false,
+    )
+    rowgap!(fig.layout, 5)
+    file = joinpath(plotdir, "$(experiment)-ns-dissipation.pdf")
+    @info "Saving dissipation plot to $file"
+    flush(stderr)
+    save(file, fig; backend = CairoMakie)
+    # ylims!(ax, -0.0005, 0.0005)
+    fig
+end
+
+true && let
+    fig = Figure(; size = (400, 330))
+    ax = Axis(fig[1, 1]; yscale = log10, xlabel = "Dissipation")
+    # xlims!(ax, -17, 12)
+    # ylims!(ax, 1e-4, 1e0)
+    # xlims!(ax, -15, 11)
+    xlims!(ax, -13, 9)
+    ylims!(ax, 7e-5, 1.4e0)
+    function plot(i, d, label)
+        k = kde(d)#; boundary = (-8, 8))
+        lines!(
+            ax,
+            k.x,
+            k.density;
+            color = Cycled(i),
+            # color = Makie.wong_colors()[i],
+            label,
+        )
+    end
+    # plot(i, d, label) = hist!(
+    #     ax,
+    #     d;
+    #     # bins = 100,
+    #     bins = range(-17, 12, 100),
+    #     normalization = :probability,
+    #     # strokewidth = 1,
+    #     # color = Cycled(i),
+    #     color = Makie.wong_colors()[i],
+    #     label,
+    # )
+    # plot(d) = density!(ax, d; npoints = 500, strokewidth = 1)
+    vlines!(ax, [0]; color = Cycled(1), label = "No-model")
+    # plot(1, 3e-2 * randn(length(diss.classic.data)), "No-model")
+    plot(2, diss.classic.data |> vec |> Array, "Classic")
+    plot(3, diss.swapfil_symm.data |> vec |> Array, "Swap-sym")
+    plot(4, diss.swapfil.data |> vec |> Array, "Swap")
+    # plot(5, diss.rfu.data |> vec |> Array)
+    Legend(
+        fig[0, 1],
+        ax;
+        tellwidth = false,
+        orientation = :horizontal,
+        # nbanks = 2,
+        framevisible = false,
+    )
+    rowgap!(fig.layout, 5)
+    file = joinpath(plotdir, "$(experiment)-ns-dissipation.pdf")
+    @info "Saving dissipation plot to $file"
+    flush(stderr)
+    save(file, fig; backend = CairoMakie)
+    # ylims!(ax, -0.0005, 0.0005)
+    fig
 end
