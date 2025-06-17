@@ -14,17 +14,18 @@ using LinearAlgebra
 using Random
 using StructuralClosure: NavierStokes
 using Turbulox
+using Turbulox.KernelAbstractions
 using WGLMakie
 using WriteVTK
 
 @info "Loading case"
 flush(stderr)
 
-# begin
-#     case = NavierStokes.smallcase()
-#     n_les = 50
-#     compression = 3
-# end
+begin
+    case = NavierStokes.smallcase()
+    n_les = 50
+    compression = 3
+end
 
 # begin
 #     case = NavierStokes.largecase()
@@ -32,11 +33,11 @@ flush(stderr)
 #     compression = 5
 # end
 
-begin
-    case = NavierStokes.snelliuscase()
-    n_les = 160
-    compression = 5
-end
+# begin
+#     case = NavierStokes.snelliuscase()
+#     n_les = 160
+#     compression = 5
+# end
 
 (; viscosity, outdir, datadir, plotdir, seed) = case
 g_dns = case.grid
@@ -135,17 +136,17 @@ end
 @info "Computing SFS tensors"
 flush(stderr)
 
-# experiment = "volavg"
-# sfs = NavierStokes.sfs_tensors_volume(;
-#     ustart,
-#     g_dns,
-#     g_les,
-#     poisson_dns,
-#     poisson_les,
-#     viscosity,
-#     compression,
-#     doproject = false,
-# );
+experiment = "volavg"
+sfs = NavierStokes.sfs_tensors_volume(;
+    ustart,
+    g_dns,
+    g_les,
+    poisson_dns,
+    poisson_les,
+    viscosity,
+    compression,
+    doproject = false,
+);
 
 # experiment = "project_volavg"
 # sfs = NavierStokes.sfs_tensors_volume(;
@@ -159,19 +160,46 @@ flush(stderr)
 #     doproject = true,
 # );
 
-experiment = "surfavg"
-sfs = NavierStokes.sfs_tensors_surface(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = false,
-);
+# experiment = "surfavg"
+# sfs = NavierStokes.sfs_tensors_surface(;
+#     ustart,
+#     g_dns,
+#     g_les,
+#     poisson_dns,
+#     poisson_les,
+#     viscosity,
+#     compression,
+#     doproject = false,
+# );
 
 # plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
+
+true && let
+    using Turbulox.KernelAbstractions
+    u = ustart
+    fu = VectorField(g_les)
+    if experiment == "volavg"
+        volumefilter!(fu, u, compression)
+    elseif experiment == "project_volavg"
+        volumefilter!(fu, u, compression)
+        p = ScalarField(g_les)
+        project!(fu, p, poisson_les)
+    elseif experiment == "surfavg"
+        surfacefilter!(fu, u, compression)
+    else
+        error("Unknown experiment: $experiment")
+    end
+    #
+    xy = ScalarField(g_les)
+    @kernel function getfrac!(xy, σ, σ_symm)
+        I = @index(Global, Cartesian)
+        x, y, z = X(), Y(), Z()
+        xy[I] = sqrt(2 * abs2(σ_symm[x, y][I]) / (abs2(σ[x, y][I]) + abs2(σ[y, x][I])))
+    end
+    apply!(getfrac!, g_les, xy, sfs.σ_swapfil, sfs.σ_swapfil_symm)
+    xy.data
+    1 - sum(xy.data) / length(xy.data)
+end
 
 false && let
     x, y, z = X(), Y(), Z()
@@ -198,7 +226,6 @@ true && let
     else
         error("Unknown experiment: $experiment")
     end
-    Turbulox.volumefilter!(fu, u, compression)
     d_classic = ScalarField(g_les)
     d_swapfil = ScalarField(g_les)
     d_swapfil_symm = ScalarField(g_les)
