@@ -28,17 +28,17 @@ flush(stderr)
 #     compression = 3
 # end
 
-begin
-    case = NavierStokes.largecase()
-    n_les = 100
-    compression = 5
-end
-
 # begin
-#     case = NavierStokes.snelliuscase()
-#     n_les = 160
+#     case = NavierStokes.largecase()
+#     n_les = 100
 #     compression = 5
 # end
+
+begin
+    case = NavierStokes.snelliuscase()
+    n_les = 160
+    compression = 5
+end
 
 (; viscosity, outdir, datadir, plotdir, seed) = case
 g_dns = case.grid
@@ -202,6 +202,10 @@ true && let
     round(frac; sigdigits = 3)
 end
 
+# Volavg: 0.101
+# Proj.vol: 0.1
+# Surfavg: 0.0
+
 false && let
     x, y, z = X(), Y(), Z()
     i, j = x, x
@@ -306,12 +310,13 @@ true && let
         framevisible = false,
     )
     rowgap!(fig.layout, 5)
-    file = joinpath(plotdir, "$(experiment)-ns-dissipation.pdf")
+    file = joinpath(plotdir, "$(experiment)-ns-dissipation-hist.pdf")
     @info "Saving dissipation plot to $file"
     flush(stderr)
     save(file, fig; backend = CairoMakie)
     # ylims!(ax, -0.0005, 0.0005)
     fig
+    nothing
 end
 
 true && let
@@ -321,7 +326,7 @@ true && let
     # ylims!(ax, 1e-4, 1e0)
     # xlims!(ax, -15, 11)
     xlims!(ax, -13, 9)
-    ylims!(ax, 7e-5, 1.4e0)
+    ylims!(ax, 7e-5, 2e0)
     function plot(i, d, label)
         k = kde(d)#; boundary = (-8, 8))
         lines!(
@@ -366,4 +371,5 @@ true && let
     save(file, fig; backend = CairoMakie)
     # ylims!(ax, -0.0005, 0.0005)
     fig
+    nothing
 end
