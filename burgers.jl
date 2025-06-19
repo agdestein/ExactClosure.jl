@@ -11,7 +11,8 @@ using CairoMakie
 using FFTW
 using LinearAlgebra
 using Random
-using StructuralClosure: Burgers
+using StructuralClosure
+using StructuralClosure.Burgers
 using WGLMakie
 
 outdir = "~/Projects/StructuralErrorPaper" |> expanduser
@@ -49,7 +50,7 @@ let
     xh = points_stag(g)
     @show sum(abs2, ustart) / 2nh sum(abs2, uh) / 2nh
     fig = Figure(; size = (400, 340))
-    ax = Axis(fig[1, 1]; xlabel = "x")
+    ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u")
     lines!(ax, xh, ustart; label = "Initial")
     lines!(ax, xh, uh; label = "Final")
     # lines!(ax, xH, uH)
@@ -77,7 +78,7 @@ series = map(setup.nH) do nH
         dns_fil = (; g = gH, u = zeros(nH, nsample), label = "Filtered DNS"),
         nomodel = (; g = gH, u = zeros(nH, nsample), label = "No model"),
         classic = (; g = gH, u = zeros(nH, nsample), label = "Classic"),
-        revolut = (; g = gH, u = zeros(nH, nsample), label = "Swap"),
+        revolut = (; g = gH, u = zeros(nH, nsample), label = "Swap (ours)"),
         # classic_conv = (; g = gH, u = zeros(nH, nsample), label = "Classic (conv)"),
         # revolut_conv = (; g = gH, u = zeros(nH, nsample), label = "Filter-swap (conv)"),
     )
@@ -160,49 +161,6 @@ specseries = map(series) do (; nH, fields)
     (; nH, specs)
 end;
 
-# Plot zoom-in box
-function zoom!(subfig, ax1; point, logx, logy, relwidth, relheight)
-    # sk, se = sqrt(logx), sqrt(logy)
-    sk, se = logx, logy
-    kk, ee = point
-    k0, k1 = kk / sk, kk * sk
-    e0, e1 = ee / se, ee * se
-    limits = (k0, k1, e0, e1)
-    lines!(
-        ax1,
-        [
-            Point2f(k0, e0),
-            Point2f(k1, e0),
-            Point2f(k1, e1),
-            Point2f(k0, e1),
-            Point2f(k0, e0),
-        ];
-        color = :black,
-        linewidth = 1.5,
-    )
-    ax2 = Axis(
-        subfig;
-        width = Relative(relwidth),
-        height = Relative(relheight),
-        halign = 0.05,
-        valign = 0.05,
-        limits,
-        xscale = log10,
-        yscale = log10,
-        xticksvisible = false,
-        xticklabelsvisible = false,
-        xgridvisible = false,
-        yticksvisible = false,
-        yticklabelsvisible = false,
-        ygridvisible = false,
-        backgroundcolor = :white,
-    )
-    # https://discourse.julialang.org/t/makie-inset-axes-and-their-drawing-order/60987/5
-    translate!(ax2.scene, 0, 0, 10)
-    translate!(ax2.elements[:background], 0, 0, 9)
-    ax2
-end
-
 # Spectrum
 let
     fig = Figure(; size = (400, 800))
@@ -218,6 +176,7 @@ let
             xscale = log10,
             # xticks = ticks,
             xlabel = "Wavenumber",
+            ylabel = "Energy",
             xticksvisible = islast,
             xticklabelsvisible = islast,
             xlabelvisible = islast,
@@ -225,7 +184,7 @@ let
         )
         tip = specs.dns_fil
         o = (22, 70, 210)[i]
-        ax_zoom = zoom!(
+        ax_zoom = StructuralClosure.zoombox!(
             f[i, 1],
             ax;
             point = (tip.k[end-o], tip.e[end-o]),
@@ -293,12 +252,6 @@ let
     fig
 end
 
-let
-    r = stress(gh, sols.uh, visc)
-    d = dissipation(gh, sols.uh, r)
-    hist(d; bins = 50)
-end
-
 diss = let
     (; visc) = setup
     map(series) do (; nH, fields)
@@ -325,7 +278,7 @@ let
     models = [
         (; label = "No-model", sym = :nomodel),
         (; label = "Classic", sym = :classic),
-        (; label = "Swap", sym = :revolut),
+        (; label = "Swap (ours)", sym = :revolut),
     ]
     fig = Figure(; size = (400, 800))
     for (i, diss) in diss |> enumerate
@@ -334,6 +287,7 @@ let
             xticks = (eachindex(models), getindex.(models, :label)),
             xticksvisible = i == 3,
             xticklabelsvisible = i == 3,
+            ylabel = "Dissipation",
         )
         for (i, model) in enumerate(models)
             d = diss[model.sym]
