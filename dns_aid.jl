@@ -174,13 +174,16 @@ let
         xslope = specs.dns_ref.k[8:(end-12)]
         yslope = @. 1.58 * D^(2 / 3) * (2π * xslope)^(-5 / 3)
         specs = (; specs..., kolmogo = (; k = xslope, s = yslope))
-        ax_full =
-            Makie.Axis(fig[i, 1]; xscale = log2, yscale = log10, xlabel = "Wavenumber",
-                ylabel = "Energy",
-                xticksvisible = islast,
-                xticklabelsvisible = islast,
-                xlabelvisible = islast,
-            )
+        ax_full = Makie.Axis(
+            fig[i, 1];
+            xscale = log2,
+            yscale = log10,
+            xlabel = "Wavenumber",
+            ylabel = "Energy",
+            xticksvisible = islast,
+            xticklabelsvisible = islast,
+            xlabelvisible = islast,
+        )
         o = 10
         ax_zoom = zoombox!(
             fig[i, 1],

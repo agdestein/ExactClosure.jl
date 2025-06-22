@@ -22,11 +22,11 @@ using WriteVTK
 @info "Loading case"
 flush(stderr)
 
-# begin
-#     case = NavierStokes.smallcase()
-#     n_les = 50
-#     compression = 3
-# end
+begin
+    case = NavierStokes.smallcase()
+    n_les = 50
+    compression = 3
+end
 
 # begin
 #     case = NavierStokes.largecase()
@@ -216,7 +216,7 @@ false && let
     # norm(1.0*sfs.classic.data - sfs.swapfil.data) / norm(sfs.swapfil.data)
 end
 
-diss = let
+let
     u = ustart
     # u = sols.dns_ref
     fu = VectorField(g_les)
@@ -247,7 +247,8 @@ diss = let
         fu,
     )
     # apply!(Turbulox.tensordissipation_staggered!, g_les, diss.rfu, sfs.rfu, fu)
-    diss
+    diss = adapt(Array, diss)
+    jldsave(joinpath(datadir, "$(experiment)_diss.jld2"); diss)
 end
 
 true && let
@@ -277,99 +278,151 @@ true && let
 end
 
 true && let
-    fig = Figure(; size = (400, 330))
-    ax = Axis(fig[1, 1]; yscale = log10,
-        xlabel = "Dissipation",
-    )
-    xlims!(ax, -17, 12)
-    ylims!(ax, 1e-5, 4e-1)
-    plot(i, d, label) = hist!(
-        ax,
-        d;
-        # bins = 100,
-        bins = range(-17, 12, 100),
-        normalization = :probability,
-        # strokewidth = 1,
-        # color = Cycled(i),
-        color = Makie.wong_colors()[i],
-        label,
-    )
-    # plot(d) = density!(ax, d; npoints = 500, strokewidth = 1)
-    plot(4, diss.swapfil.data |> vec |> Array, "Swap")
-    plot(3, diss.swapfil_symm.data |> vec |> Array, "Swap-sym")
-    plot(2, diss.classic.data |> vec |> Array, "Classic")
-    # plot(4, 3e-2 * randn(length(diss.classic.data)), "No-model")
-    vlines!(ax, [0], color = Cycled(1), label = "No-model")
-    # plot(5, diss.rfu.data |> vec |> Array)
-    Legend(
-        fig[0, 1],
-        ax;
-        tellwidth = false,
-        orientation = :horizontal,
-        # nbanks = 2,
-        framevisible = false,
-    )
-    rowgap!(fig.layout, 5)
-    file = joinpath(plotdir, "$(experiment)-ns-dissipation-hist.pdf")
+    fig = Figure(; size = (410, 750))
+    for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
+        islast = i == 3
+        diss = load(joinpath(datadir, "$(experiment)_diss.jld2"), "diss")
+        ax = Axis(
+            fig[i, 1];
+            yscale = log10,
+            xlabel = "Dissipation",
+            ylabel = "Density",
+            xticksvisible = islast,
+            xticklabelsvisible = islast,
+            xlabelvisible = islast,
+        )
+        xlims!(ax, -17, 12)
+        ylims!(ax, 1e-5, 4e-1)
+        plot(i, d, label) = hist!(
+            ax,
+            d;
+            # bins = 100,
+            bins = range(-17, 12, 100),
+            normalization = :probability,
+            # strokewidth = 1,
+            # color = Cycled(i),
+            color = Makie.wong_colors()[i],
+            label,
+        )
+        # plot(d) = density!(ax, d; npoints = 500, strokewidth = 1)
+        plot(4, diss.swapfil.data |> vec |> Array, "Swap")
+        plot(3, diss.swapfil_symm.data |> vec |> Array, "Swap-sym")
+        plot(2, diss.classic.data |> vec |> Array, "Classic")
+        # plot(4, 3e-2 * randn(length(diss.classic.data)), "No-model")
+        vlines!(ax, [0]; color = Cycled(1), label = "No-model")
+        # plot(5, diss.rfu.data |> vec |> Array)
+        i == 1 && Legend(
+            fig[0, 1],
+            ax;
+            tellwidth = false,
+            orientation = :horizontal,
+            # nbanks = 2,
+            framevisible = false,
+        )
+        Label(
+            fig[i, 1],
+            Dict("volavg" => "VA", "project_volavg" => "PVA", "surfavg" => "SA")[experiment];
+            # Dict(
+            #     "volavg" => "Volume-average",
+            #     "project_volavg" => "Projected volume-average",
+            #     "surfavg" => "Surface-average",
+            # )[experiment];
+            # fontsize = 26,
+            font = :bold,
+            padding = (10, 10, 10, 10),
+            halign = :left,
+            valign = :top,
+            tellwidth = false,
+            tellheight = false,
+        )
+    end
+    # rowgap!(fig.layout, 5)
+    file = joinpath(plotdir, "ns-dissipation-hist.pdf")
     @info "Saving dissipation plot to $file"
     flush(stderr)
     save(file, fig; backend = CairoMakie)
     # ylims!(ax, -0.0005, 0.0005)
     fig
-    nothing
 end
 
 true && let
-    fig = Figure(; size = (400, 330))
-    ax = Axis(fig[1, 1]; yscale = log10, xlabel = "Dissipation")
-    # xlims!(ax, -17, 12)
-    # ylims!(ax, 1e-4, 1e0)
-    # xlims!(ax, -15, 11)
-    xlims!(ax, -13, 9)
-    ylims!(ax, 7e-5, 2e0)
-    function plot(i, d, label)
-        k = kde(d)#; boundary = (-8, 8))
-        lines!(
-            ax,
-            k.x,
-            k.density;
-            color = Cycled(i),
-            # color = Makie.wong_colors()[i],
-            label,
+    fig = Figure(; size = (410, 750))
+    for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
+        islast = i == 3
+        diss = load(joinpath(datadir, "$(experiment)_diss.jld2"), "diss")
+        ax = Axis(
+            fig[i, 1];
+            yscale = log10,
+            xlabel = "Dissipation",
+            ylabel = "Density",
+            xticksvisible = islast,
+            xticklabelsvisible = islast,
+            xlabelvisible = islast,
+        )
+        # xlims!(ax, -17, 12)
+        # ylims!(ax, 1e-4, 1e0)
+        # xlims!(ax, -15, 11)
+        xlims!(ax, -13, 9)
+        ylims!(ax, 7e-5, 2e0)
+        function plot(i, d, label)
+            k = kde(d)#; boundary = (-8, 8))
+            lines!(
+                ax,
+                k.x,
+                k.density;
+                color = Cycled(i),
+                # color = Makie.wong_colors()[i],
+                label,
+            )
+        end
+        # plot(i, d, label) = hist!(
+        #     ax,
+        #     d;
+        #     # bins = 100,
+        #     bins = range(-17, 12, 100),
+        #     normalization = :probability,
+        #     # strokewidth = 1,
+        #     # color = Cycled(i),
+        #     color = Makie.wong_colors()[i],
+        #     label,
+        # )
+        # plot(d) = density!(ax, d; npoints = 500, strokewidth = 1)
+        vlines!(ax, [0]; color = Cycled(1), label = "No-model")
+        # plot(1, 3e-2 * randn(length(diss.classic.data)), "No-model")
+        plot(2, diss.classic.data |> vec |> Array, "Classic")
+        plot(3, diss.swapfil_symm.data |> vec |> Array, "Swap-sym")
+        plot(4, diss.swapfil.data |> vec |> Array, "Swap")
+        # plot(5, diss.rfu.data |> vec |> Array)
+        i == 1 && Legend(
+            fig[0, 1],
+            ax;
+            tellwidth = false,
+            orientation = :horizontal,
+            # nbanks = 2,
+            framevisible = false,
+        )
+        Label(
+            fig[i, 1],
+            Dict("volavg" => "VA", "project_volavg" => "PVA", "surfavg" => "SA")[experiment];
+            # Dict(
+            #     "volavg" => "Volume-average",
+            #     "project_volavg" => "Projected volume-average",
+            #     "surfavg" => "Surface-average",
+            # )[experiment];
+            # fontsize = 26,
+            font = :bold,
+            padding = (10, 10, 10, 10),
+            halign = :left,
+            valign = :top,
+            tellwidth = false,
+            tellheight = false,
         )
     end
-    # plot(i, d, label) = hist!(
-    #     ax,
-    #     d;
-    #     # bins = 100,
-    #     bins = range(-17, 12, 100),
-    #     normalization = :probability,
-    #     # strokewidth = 1,
-    #     # color = Cycled(i),
-    #     color = Makie.wong_colors()[i],
-    #     label,
-    # )
-    # plot(d) = density!(ax, d; npoints = 500, strokewidth = 1)
-    vlines!(ax, [0]; color = Cycled(1), label = "No-model")
-    # plot(1, 3e-2 * randn(length(diss.classic.data)), "No-model")
-    plot(2, diss.classic.data |> vec |> Array, "Classic")
-    plot(3, diss.swapfil_symm.data |> vec |> Array, "Swap-sym")
-    plot(4, diss.swapfil.data |> vec |> Array, "Swap")
-    # plot(5, diss.rfu.data |> vec |> Array)
-    Legend(
-        fig[0, 1],
-        ax;
-        tellwidth = false,
-        orientation = :horizontal,
-        # nbanks = 2,
-        framevisible = false,
-    )
-    rowgap!(fig.layout, 5)
-    file = joinpath(plotdir, "$(experiment)-ns-dissipation.pdf")
+    # rowgap!(fig.layout, 5)
+    file = joinpath(plotdir, "ns-dissipation.pdf")
     @info "Saving dissipation plot to $file"
     flush(stderr)
     save(file, fig; backend = CairoMakie)
     # ylims!(ax, -0.0005, 0.0005)
     fig
-    nothing
 end
