@@ -22,11 +22,11 @@ using WriteVTK
 @info "Loading case"
 flush(stderr)
 
-# begin
-#     case = NavierStokes.smallcase()
-#     n_les = 50
-#     compression = 3
-# end
+begin
+    case = NavierStokes.smallcase()
+    n_les = 50
+    compression = 3
+end
 
 begin
     case = NavierStokes.largecase()
