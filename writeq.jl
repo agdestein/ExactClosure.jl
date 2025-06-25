@@ -22,17 +22,17 @@ using WriteVTK
 @info "Loading case"
 flush(stderr)
 
-begin
-    case = NavierStokes.smallcase()
-    n_les = 50
-    compression = 3
-end
-
 # begin
-#     case = NavierStokes.largecase()
-#     n_les = 100
-#     compression = 5
+#     case = NavierStokes.smallcase()
+#     n_les = 50
+#     compression = 3
 # end
+
+begin
+    case = NavierStokes.largecase()
+    n_les = 100
+    compression = 5
+end
 
 begin
     case = NavierStokes.snelliuscase()
@@ -56,6 +56,10 @@ ustart = let
     data = path |> load_object |> adapt(g_dns.backend)
     VectorField(g_dns, data)
 end
+
+s = get_scale_numbers(ustart, viscosity)
+s |> pairs
+1 / s.λ
 
 false && let
     uh = ustart
