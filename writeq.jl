@@ -255,6 +255,92 @@ let
     jldsave(joinpath(datadir, "$(experiment)_diss.jld2"); diss)
 end
 
+using KernelAbstractions
+
+false && let
+    uh = ustart
+    uH = VectorField(g_les)
+    # Turbulox.surfacefilter!(uH, uh, compression)
+    Turbulox.volumefilter!(uH, uh, compression)
+    uh.data[:, :, end, 3] |> Array |> heatmap
+    # uH.data[:, :, end, 3] |> Array |> heatmap
+    # nothing
+end
+
+let
+    u = ustart
+    ubar = VectorField(g_les)
+    Turbulox.volumefilter!(ubar, u, compression)
+    fig = Figure(; size = (700, 350))
+    kwargs = (;
+        xlabelvisible = false,
+        ylabelvisible = false,
+        xticksvisible = false,
+        yticksvisible = false,
+        xticklabelsvisible = false,
+        yticklabelsvisible = false,
+        aspect = DataAspect(),
+    )
+    imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
+    image!(Axis(fig[1, 1]; kwargs...), u.data[:, :, end, 1] |> Array; imkwargs...)
+    image!(Axis(fig[1, 2]; kwargs...), ubar.data[:, :, end, 1] |> Array; imkwargs...)
+    file = joinpath(plotdir, "ns-fields.png")
+    @info "Saving fields plot to $file"
+    save(file, fig; backend = CairoMakie)
+    fig
+end
+
+let
+    u = ustart
+    ubar = VectorField(g_les)
+    Turbulox.volumefilter!(ubar, u, compression)
+    sfs = NavierStokes.sfs_tensors_volume(;
+        ustart,
+        g_dns,
+        g_les,
+        poisson_dns,
+        poisson_les,
+        viscosity,
+        compression,
+        doproject = false,
+    )
+    @kernel function kernellow(σxx, σxy, σxz, σ, k)
+        i, j = @index(Global, NTuple)
+        x, y, z = X(), Y(), Z()
+        σxx[i, j] = σ[x, x][i, j, k]
+        σxy[i, j] = σ[x, y][i, j, k]
+        σxz[i, j] = σ[x, z][i, j, k]
+    end
+    σxx = similar(u.data, n_les, n_les)
+    σxy = similar(u.data, n_les, n_les)
+    σxz = similar(u.data, n_les, n_les)
+    kernellow(g_les.backend, g_les.workgroupsize)(
+        σxx,
+        σxy,
+        σxz,
+        sfs.σ_swapfil,
+        n_les;
+        ndrange = (n_les, n_les),
+    )
+    u.data[:, :, end, 1] |> Array |> heatmap
+    ubar.data[:, :, end, 1] |> Array |> heatmap
+    σxx |> Array |> heatmap
+    fig = Figure()
+    kwargs = (;
+        xlabelvisible = false,
+        ylabelvisible = false,
+        xticksvisible = false,
+        yticksvisible = false,
+        xticklabelsvisible = false,
+        yticklabelsvisible = false,
+    )
+    heatmap!(Axis(fig[1, 1]; kwargs...), u.data[:, :, end, 1] |> Array)
+    heatmap!(Axis(fig[1, 2]; kwargs...), ubar.data[:, :, end, 1] |> Array)
+    heatmap!(Axis(fig[2, 1]; kwargs...), σxx |> Array)
+    heatmap!(Axis(fig[2, 2]; kwargs...), σxz |> Array)
+    fig
+end
+
 true && let
     fig = Figure(; size = (400, 300))
     # ax = Axis(fig[1, 1]; xticks = ([1, 2], ["Classic", "Filter-swap"]))
@@ -426,7 +512,7 @@ true && let
     file = joinpath(plotdir, "ns-dissipation.pdf")
     @info "Saving dissipation plot to $file"
     flush(stderr)
-    save(file, fig; backend = CairoMakie)
+    # save(file, fig; backend = CairoMakie)
     # ylims!(ax, -0.0005, 0.0005)
     fig
 end
