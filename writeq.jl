@@ -294,6 +294,60 @@ let
     u = ustart
     ubar = VectorField(g_les)
     Turbulox.volumefilter!(ubar, u, compression)
+    fig = Figure(; size = (700, 350))
+    kwargs = (;
+        xlabelvisible = false,
+        ylabelvisible = false,
+        xticksvisible = false,
+        yticksvisible = false,
+        xticklabelsvisible = false,
+        yticklabelsvisible = false,
+        aspect = DataAspect(),
+    )
+    a = 30
+    A = compression * a
+    imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
+    image!(Axis(fig[1, 1]; kwargs...), u.data[end-A+1:end, end-A+1:end, end, 1] |> Array; imkwargs...)
+    image!(Axis(fig[1, 2]; kwargs...), ubar.data[end-a+1:end, end-a+1:end, end, 1] |> Array; imkwargs...)
+    file = joinpath(plotdir, "ns-fields-zoom.png")
+    @info "Saving fields plot to $file"
+    save(file, fig; backend = CairoMakie)
+    fig
+end
+
+let
+    u = ustart
+    ubar = VectorField(g_les)
+    Turbulox.volumefilter!(ubar, u, compression)
+    fig = Figure(; size = (700, 700))
+    kwargs = (;
+        xlabelvisible = false,
+        ylabelvisible = false,
+        xticksvisible = false,
+        yticksvisible = false,
+        xticklabelsvisible = false,
+        yticklabelsvisible = false,
+        aspect = DataAspect(),
+    )
+    a = 30
+    b = 40
+    A = compression * a
+    B = compression * b
+    imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
+    image!(Axis(fig[1, 1]; kwargs...), u.data[:, :, end, 1] |> Array; imkwargs...)
+    image!(Axis(fig[1, 2]; kwargs...), ubar.data[:, :, end, 1] |> Array; imkwargs...)
+    image!(Axis(fig[2, 1]; kwargs...), u.data[A+1:B, A+1:B, end, 1] |> Array; imkwargs...)
+    image!(Axis(fig[2, 2]; kwargs...), ubar.data[a+1:b, a+1:b, end, 1] |> Array; imkwargs...)
+    file = joinpath(plotdir, "ns-fields.png")
+    @info "Saving fields plot to $file"
+    save(file, fig; backend = CairoMakie)
+    fig
+end
+
+let
+    u = ustart
+    ubar = VectorField(g_les)
+    Turbulox.volumefilter!(ubar, u, compression)
     sfs = NavierStokes.sfs_tensors_volume(;
         ustart,
         g_dns,
