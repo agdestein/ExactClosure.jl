@@ -23,23 +23,23 @@ using WGLMakie
 
 @flushinfo "Loading case"
 
-# case = NavierStokes.smallcase()
-# case = NavierStokes.largecase()
+case = NavierStokes.smallcase()
+case = NavierStokes.largecase()
 case = NavierStokes.newcase()
-# case = NavierStokes.snelliuscase()
-(; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak) = case
+case = NavierStokes.snelliuscase()
+(; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak) = case
 T = typeof(grid.L)
 
 ut_obs = u = ustart = cache = poisson = nothing
 GC.gc();
 CUDA.reclaim();
 poisson = poissonsolver(grid);
-ustart = Turbulox.randomfield_simple(
-    Turbulox.energyprofile,
+ustart = Turbulox.randomfield_shell(
+    Turbulox.energyprofile(kpeak),
     grid,
     poisson;
     rng = Xoshiro(seed),
-    params = (; kpeak, amplitude),
+    totalenergy,
 );
 cache = (; ustart = VectorField(grid), du = VectorField(grid), p = ScalarField(grid));
 
@@ -50,7 +50,6 @@ open(joinpath(outdir, "initial_energy.txt"), "w") do io
 end
 
 u = ustart
-# u = VectorField(grid, copy(ustart.data));
 
 doplot = true
 if doplot
@@ -63,7 +62,7 @@ end
 let
     t = 0.0 |> T
     cfl = 0.85 |> T
-    tstop = 0.3 |> T
+    tstop = 0.4 |> T
     i = 0
     while t < tstop
         i += 1
@@ -85,11 +84,6 @@ let
         end
     end
     t
-end
-
-let
-    hu = 1
-    @flushinfo "hu = $hu,\tumax = $(maximum(abs, u.data))"
 end
 
 file = joinpath(outdir, "u.jld2")

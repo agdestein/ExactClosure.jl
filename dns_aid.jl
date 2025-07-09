@@ -26,17 +26,17 @@ begin
     compression = 3
 end
 
-# begin
-#     case = NavierStokes.largecase()
-#     n_les = 100
-#     compression = 5
-# end
+begin
+    case = NavierStokes.largecase()
+    n_les = 100
+    compression = 5
+end
 
-# begin
-#     case = NavierStokes.snelliuscase()
-#     n_les = 160
-#     compression = 5
-# end
+begin
+    case = NavierStokes.snelliuscase()
+    n_les = 160
+    compression = 5
+end
 
 (; viscosity, outdir, datadir, plotdir, seed) = case
 g_dns = case.grid

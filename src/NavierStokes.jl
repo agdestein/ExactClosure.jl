@@ -21,7 +21,7 @@ function smallcase()
     outdir = joinpath(@__DIR__, "..", "output", "smallcase") |> mkpath
     datadir = joinpath(outdir, "data") |> mkpath
     plotdir = joinpath(outdir, "plots") |> mkpath
-    amplitude = T(5e-2)
+    amplitude = T(1)
     kpeak = 5
     (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak)
 end
@@ -31,29 +31,29 @@ function largecase()
     seed = 123
     # T = Float32
     T = Float64
-    grid = Grid(; ho = Val(1), L = T(1), n = 500, backend = get_backend())
-    viscosity = 1 / 10_000 |> T
+    grid = Grid(; ho = Val(1), L = T(1), n = 540, backend = get_backend())
+    viscosity = 1 / 40_000 |> T
     outdir = joinpath(@__DIR__, "..", "output", "largecase") |> mkpath
     datadir = joinpath(outdir, "data") |> mkpath
     plotdir = joinpath(outdir, "plots") |> mkpath
-    amplitude = T(5e-2)
+    totalenergy = T(1 / 2)
     kpeak = 5
-    (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak)
+    (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak)
 end
 
-"Large test case."
+"New test case."
 function newcase()
     seed = 123
     # T = Float32
     T = Float64
-    grid = Grid(; ho = Val(1), L = T(1), n = 500, backend = get_backend())
-    viscosity = 1 / 20_000 |> T
-    outdir = joinpath(@__DIR__, "..", "output", "newcase") |> mkpath
+    grid = Grid(; L = T(1), n = 810, backend = get_backend())
+    viscosity = 1 / 40_000 |> T
+    outdir = joinpath(@__DIR__, "..", "output", "largecase") |> mkpath
     datadir = joinpath(outdir, "data") |> mkpath
     plotdir = joinpath(outdir, "plots") |> mkpath
-    amplitude = T(5e-2)
+    totalenergy = T(1 / 2)
     kpeak = 5
-    (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak)
+    (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak)
 end
 
 "Large test case."
@@ -91,7 +91,7 @@ function plotsol(u, p, viscosity; colorrange = (-50, 50))
     spec_obs = Point2{T}[] |> Observable
     slope_obs = Point2{T}[] |> Observable
     Et_obs = Observable(Et)
-    stuff = spectral_stuff(u.grid)
+    stuff = spectral_stuff(u.grid; npoint = 200)
     I3 = 1
     on(ut_obs) do (; u, t)
         apply!(vorticity!, grid, ω, u, I3; ndrange = size(ω))
@@ -113,7 +113,12 @@ function plotsol(u, p, viscosity; colorrange = (-50, 50))
 
     ax1 =
         Makie.Axis(fig[1, 1]; title = "Vorticity at z = $(I3)", xlabel = "x", ylabel = "y")
-    hm = image!(ax1, ω_obs; colorrange, colormap = :seaborn_icefire_gradient)
+    hm = image!(
+        ax1,
+        ω_obs;
+        # colorrange,
+        colormap = :seaborn_icefire_gradient,
+    )
     # Colorbar(fig[1, 0], hm)
 
     ax2 = Makie.Axis(fig[1, 2]; title = "Total energy", xlabel = "Time")

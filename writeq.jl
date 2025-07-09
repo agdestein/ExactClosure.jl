@@ -271,7 +271,7 @@ let
     u = ustart
     ubar = VectorField(g_les)
     Turbulox.volumefilter!(ubar, u, compression)
-    fig = Figure(; size = (700, 350))
+    fig = Figure(; size = (900, 450))
     kwargs = (;
         xlabelvisible = false,
         ylabelvisible = false,
@@ -307,8 +307,16 @@ let
     a = 30
     A = compression * a
     imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
-    image!(Axis(fig[1, 1]; kwargs...), u.data[end-A+1:end, end-A+1:end, end, 1] |> Array; imkwargs...)
-    image!(Axis(fig[1, 2]; kwargs...), ubar.data[end-a+1:end, end-a+1:end, end, 1] |> Array; imkwargs...)
+    image!(
+        Axis(fig[1, 1]; kwargs...),
+        u.data[(end-A+1):end, (end-A+1):end, end, 1] |> Array;
+        imkwargs...,
+    )
+    image!(
+        Axis(fig[1, 2]; kwargs...),
+        ubar.data[(end-a+1):end, (end-a+1):end, end, 1] |> Array;
+        imkwargs...,
+    )
     file = joinpath(plotdir, "ns-fields-zoom.png")
     @info "Saving fields plot to $file"
     save(file, fig; backend = CairoMakie)
@@ -336,8 +344,16 @@ let
     imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
     image!(Axis(fig[1, 1]; kwargs...), u.data[:, :, end, 1] |> Array; imkwargs...)
     image!(Axis(fig[1, 2]; kwargs...), ubar.data[:, :, end, 1] |> Array; imkwargs...)
-    image!(Axis(fig[2, 1]; kwargs...), u.data[A+1:B, A+1:B, end, 1] |> Array; imkwargs...)
-    image!(Axis(fig[2, 2]; kwargs...), ubar.data[a+1:b, a+1:b, end, 1] |> Array; imkwargs...)
+    image!(
+        Axis(fig[2, 1]; kwargs...),
+        u.data[(A+1):B, (A+1):B, end, 1] |> Array;
+        imkwargs...,
+    )
+    image!(
+        Axis(fig[2, 2]; kwargs...),
+        ubar.data[(a+1):b, (a+1):b, end, 1] |> Array;
+        imkwargs...,
+    )
     file = joinpath(plotdir, "ns-fields.png")
     @info "Saving fields plot to $file"
     save(file, fig; backend = CairoMakie)
@@ -503,11 +519,11 @@ true && let
             xticklabelsvisible = islast,
             xlabelvisible = islast,
         )
-        # xlims!(ax, -17, 12)
-        # ylims!(ax, 1e-4, 1e0)
-        # xlims!(ax, -15, 11)
-        xlims!(ax, -13, 9)
-        ylims!(ax, 7e-5, 2e0)
+        # xlims!(ax, -13, 9)
+        # ylims!(ax, 7e-5, 2e0)
+        #
+        xlims!(ax, -26, 16)
+        ylims!(ax, 7e-5, 1e0)
         function plot(i, d, label)
             k = kde(d)#; boundary = (-8, 8))
             lines!(
