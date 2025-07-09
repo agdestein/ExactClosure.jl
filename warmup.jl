@@ -29,6 +29,7 @@ case = NavierStokes.newcase()
 case = NavierStokes.snelliuscase()
 (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak) = case
 T = typeof(grid.L)
+case |> pairs
 
 ut_obs = u = ustart = cache = poisson = nothing
 GC.gc();
@@ -45,7 +46,7 @@ cache = (; ustart = VectorField(grid), du = VectorField(grid), p = ScalarField(g
 
 u = ustart
 
-doplot = true
+doplot = false
 if doplot
     ut_obs = NavierStokes.plotsol(u, cache.p, viscosity)
 end
@@ -83,3 +84,8 @@ end
 file = joinpath(outdir, "u.jld2")
 @flushinfo "Saving final velocity field to $file"
 save_object(file, u.data |> Array)
+
+@flushinfo "Plotting solution"
+CairoMakie.activate!()
+ut_obs = NavierStokes.plotsol(u, cache.p, viscosity)
+save("plotsol.pdf", current_figure())
