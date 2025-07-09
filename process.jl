@@ -66,6 +66,26 @@ end
 s = get_scale_numbers(ustart, viscosity)
 s |> pairs
 1 / s.λ
+2 / s.λ
+
+# julia> s |> pairs
+# pairs(::NamedTuple) with 11 entries:
+#   :uavg   => 0.444893
+#   :D      => 0.356442
+#   :L      => 0.247046
+#   :λ      => 0.0037259
+#   :eta    => 0.00045757
+#   :t_int  => 0.555294
+#   :t_tay  => 0.00837482
+#   :t_kol  => 0.00837482
+#   :Re_int => 4396.37
+#   :Re_tay => 66.3052
+#   :Re_kol => 8.1428
+#
+# julia> 1 / s.λ
+# 268.3914272838432
+# julia> 2 / s.λ
+# 536.7828545676864
 
 false && let
     @info "Computing Q-criterion"
@@ -264,11 +284,14 @@ true && let
         # xlims!(ax, -13.5, 9)
         # ylims!(ax, 1e-4, 1e0)
         #
-        xlims!(ax, -8.4, 5)
-        ylims!(ax, 1e-3, 1e0)
+        # xlims!(ax, -8.4, 5)
+        # ylims!(ax, 1e-3, 1e0)
         #
         # xlims!(ax, -5, 3)
         # ylims!(ax, 1e-2, 1e0)
+        #
+        xlims!(ax, -6, 4)
+        ylims!(ax, 1e-3, 3e0)
         function plot(i, d, label)
             k = kde(d)#; boundary = (-8, 8))
             lines!(
@@ -328,6 +351,5 @@ true && let
     @info "Saving dissipation plot to $file"
     flush(stderr)
     save(file, fig; backend = CairoMakie)
-    # ylims!(ax, -0.0005, 0.0005)
     fig
 end

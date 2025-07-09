@@ -38,6 +38,12 @@ begin
     compression = 5
 end
 
+begin
+    case = NavierStokes.newcase()
+    n_les, compression = 270, 3
+    # n_les, compression = 165, 5
+end
+
 (; viscosity, outdir, datadir, plotdir, seed) = case
 g_dns = case.grid
 g_les = Grid(; g_dns.ho, g_dns.backend, g_dns.L, n = n_les)
@@ -55,7 +61,7 @@ poisson_les = poissonsolver(g_les);
 
 let
     cfl = 0.15 |> T
-    tstop = 0.001 |> T
+    tstop = 0.1 |> T
     # Load initial DNS
     path = joinpath(outdir, "u.jld2")
     data = path |> load_object |> adapt(g_dns.backend)
