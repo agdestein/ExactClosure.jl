@@ -43,12 +43,6 @@ ustart = Turbulox.randomfield_shell(
 );
 cache = (; ustart = VectorField(grid), du = VectorField(grid), p = ScalarField(grid));
 
-# Total initial energy
-etot = sum(abs2, ustart.data) / 2 / grid.n^3
-open(joinpath(outdir, "initial_energy.txt"), "w") do io
-    println(io, etot)
-end
-
 u = ustart
 
 doplot = true
