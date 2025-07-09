@@ -31,7 +31,7 @@ function largecase()
     seed = 123
     # T = Float32
     T = Float64
-    grid = Grid(; ho = Val(1), L = T(1), n = 540, backend = get_backend())
+    grid = Grid(; L = T(1), n = 510, backend = get_backend())
     viscosity = 1 / 40_000 |> T
     outdir = joinpath(@__DIR__, "..", "output", "largecase") |> mkpath
     datadir = joinpath(outdir, "data") |> mkpath
@@ -318,6 +318,9 @@ function dns_aid_volavg(;
     viscosity,
     compression,
     doproject,
+    docopy,
+    tstop,
+    cfl,
 )
     p_dns = ScalarField(g_dns)
     p_les = ScalarField(g_les)
@@ -328,10 +331,8 @@ function dns_aid_volavg(;
     dσ_swapfil_symm = VectorField(g_les)
     x, y, z = X(), Y(), Z()
     T = typeof(g_dns.L)
-    udns = VectorField(g_dns, copy(ustart.data))
+    udns = docopy ? VectorField(g_dns, copy(ustart.data)) : ustart
     t = 0 |> T
-    cfl = 0.15 |> T
-    tstop = 0.1 |> T
     fru = TensorField(g_les)
     firu = TensorField(g_les)
     fu = VectorField(g_les)
@@ -482,6 +483,9 @@ function dns_aid_surface(;
     viscosity,
     compression,
     doproject,
+    docopy,
+    tstop,
+    cfl,
 )
     p_dns = ScalarField(g_dns)
     p_les = ScalarField(g_les)
@@ -492,10 +496,8 @@ function dns_aid_surface(;
     dσ_swapfil_symm = VectorField(g_les)
     x, y, z = X(), Y(), Z()
     T = typeof(g_dns.L)
-    udns = VectorField(g_dns, copy(ustart.data))
+    udns = docopy ? VectorField(g_dns, copy(ustart.data)) : ustart
     t = 0 |> T
-    cfl = 0.15 |> T
-    tstop = 0.1 |> T
     firu = TensorField(g_les)
     fijru = TensorField(g_les)
     fiu = VectorField(g_les)

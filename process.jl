@@ -30,14 +30,20 @@ end
 
 begin
     case = NavierStokes.largecase()
-    n_les = 100
-    compression = 5
+    # n_les, compression = 102, 5
+    n_les, compression = 170, 3
 end
 
 begin
     case = NavierStokes.snelliuscase()
     n_les = 160
     compression = 5
+end
+
+begin
+    case = NavierStokes.newcase()
+    n_les, compression = 270, 3
+    # n_les, compression = 165, 5
 end
 
 (; viscosity, outdir, datadir, plotdir, seed) = case
@@ -60,25 +66,6 @@ end
 s = get_scale_numbers(ustart, viscosity)
 s |> pairs
 1 / s.λ
-
-false && let
-    uh = ustart
-    uH = VectorField(g_les)
-    # Turbulox.surfacefilter!(uH, uh, compression)
-    Turbulox.volumefilter!(uH, uh, compression)
-    uh.data[:, :, end, 3] |> Array |> heatmap
-    # uH.data[:, :, end, 3] |> Array |> heatmap
-    # nothing
-end
-
-false && let
-    u = ustart
-    fu = VectorField(g_dns)
-    Turbulox.volumefilter_explicit!(fu, u, compression)
-    # u.data[:, :, 1, 1] |> Array |> heatmap
-    fu.data[:, :, 1, 1] |> Array |> heatmap
-    # u.data[:, :, 1, 1] - fu.data[:, :, 1, 1] |> Array |> heatmap
-end
 
 false && let
     @info "Computing Q-criterion"
@@ -114,157 +101,90 @@ false && let
     end
 end
 
-false && let
-    u = ustart
-    ru = TensorField(g_dns)
-    dru = ScalarField(g_dns)
-    apply!(stresstensor!, g_dns, ru, u, viscosity)
-    apply!(Turbulox.tensordissipation_staggered!, g_dns, dru, ru, u)
-    dru.data
-    boxplot(
-        fill(1, length(dru)),
-        dru.data |> vec |> Array;
-        show_outliers = false,
-        whiskerwidth = 0.2,
-        orientation = :vertical,
-    )
-end
-
-# boxplot(
-#     fill(1, 1),
-#     zeros(1);
-#     show_outliers = false,
-#     whiskerwidth = 0.2,
-#     orientation = :vertical,
-# )
-
 @info "Computing SFS tensors"
 flush(stderr)
 
-experiment = "volavg"
-sfs = NavierStokes.sfs_tensors_volume(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = false,
-);
-
-experiment = "project_volavg"
-sfs = NavierStokes.sfs_tensors_volume(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = true,
-);
-
-experiment = "surfavg"
-sfs = NavierStokes.sfs_tensors_surface(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = false,
-);
-
-# plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
-
-true && let
-    u = ustart
-    fu = VectorField(g_les)
-    if experiment == "volavg"
-        volumefilter!(fu, u, compression)
-    elseif experiment == "project_volavg"
-        volumefilter!(fu, u, compression)
-        p = ScalarField(g_les)
-        project!(fu, p, poisson_les)
-    elseif experiment == "surfavg"
-        surfacefilter!(fu, u, compression)
-    else
-        error("Unknown experiment: $experiment")
-    end
-    #
-    xy = ScalarField(g_les)
-    @kernel function getfrac!(xy, σ, σ_symm)
-        I = @index(Global, Cartesian)
-        x, y, z = X(), Y(), Z()
-        xy[I] = sqrt(2 * abs2(σ_symm[x, y][I]) / (abs2(σ[x, y][I]) + abs2(σ[y, x][I])))
-    end
-    apply!(getfrac!, g_les, xy, sfs.σ_swapfil, sfs.σ_swapfil_symm)
-    xy.data
-    frac = 1 - sum(xy.data) / length(xy.data)
-    round(frac; sigdigits = 3)
-end
-
-# Volavg: 0.101
-# Proj.vol: 0.1
-# Surfavg: 0.0
-
-false && let
-    x, y, z = X(), Y(), Z()
-    i, j = x, x
-    sfs.classic[i, j].data[1, :, :] |> Array |> heatmap
-    sfs.swapfil[i, j].data[1, :, :] |> Array |> heatmap
-    # sfs.classic[i, j].data[:, :, 1]
-    # sfs.swapfil[i, j].data[:, :, 1]
-    # norm(1.0*sfs.classic.data - sfs.swapfil.data) / norm(sfs.swapfil.data)
-end
-
 let
     u = ustart
-    # u = sols.dns_ref
     fu = VectorField(g_les)
-    if experiment == "volavg"
-        volumefilter!(fu, u, compression)
-    elseif experiment == "project_volavg"
-        volumefilter!(fu, u, compression)
-        p = ScalarField(g_les)
-        project!(fu, p, poisson_les)
-    elseif experiment == "surfavg"
-        surfacefilter!(fu, u, compression)
-    else
-        error("Unknown experiment: $experiment")
+    for experiment in ["volavg", "project_volavg", "surfavg"]
+        @info "Experiment: $experiment"
+        flush(stderr)
+        if experiment == "volavg"
+            sfs = NavierStokes.sfs_tensors_volume(;
+                ustart,
+                g_dns,
+                g_les,
+                poisson_dns,
+                poisson_les,
+                viscosity,
+                compression,
+                doproject = false,
+            )
+            volumefilter!(fu, u, compression)
+        elseif experiment == "project_volavg"
+            sfs = NavierStokes.sfs_tensors_volume(;
+                ustart,
+                g_dns,
+                g_les,
+                poisson_dns,
+                poisson_les,
+                viscosity,
+                compression,
+                doproject = true,
+            )
+            volumefilter!(fu, u, compression)
+            p = ScalarField(g_les)
+            project!(fu, p, poisson_les)
+        elseif experiment == "surfavg"
+            sfs = NavierStokes.sfs_tensors_surface(;
+                ustart,
+                g_dns,
+                g_les,
+                poisson_dns,
+                poisson_les,
+                viscosity,
+                compression,
+                doproject = false,
+            )
+            surfacefilter!(fu, u, compression)
+        else
+            error("Unknown experiment: $experiment")
+        end
+        diss = (;
+            classic = ScalarField(g_les),
+            swapfil = ScalarField(g_les),
+            swapfil_symm = ScalarField(g_les),
+            # rfu = ScalarField(g_les),
+        )
+        apply!(
+            Turbulox.tensordissipation_staggered!,
+            g_les,
+            diss.classic,
+            sfs.σ_classic,
+            fu,
+        )
+        apply!(
+            Turbulox.tensordissipation_staggered!,
+            g_les,
+            diss.swapfil,
+            sfs.σ_swapfil,
+            fu,
+        )
+        apply!(
+            Turbulox.tensordissipation_staggered!,
+            g_les,
+            diss.swapfil_symm,
+            sfs.σ_swapfil_symm,
+            fu,
+        )
+        # apply!(Turbulox.tensordissipation_staggered!, g_les, diss.rfu, sfs.rfu, fu)
+        diss = adapt(Array, diss)
+        file = joinpath(datadir, "dissipation-$(experiment)-$(n_les).jld2")
+        @info "Saving dissipation to $file"
+        flush(stderr)
+        jldsave(file; diss)
     end
-    diss = (;
-        classic = ScalarField(g_les),
-        swapfil = ScalarField(g_les),
-        swapfil_symm = ScalarField(g_les),
-        # rfu = ScalarField(g_les),
-    )
-    apply!(Turbulox.tensordissipation_staggered!, g_les, diss.classic, sfs.σ_classic, fu)
-    apply!(Turbulox.tensordissipation_staggered!, g_les, diss.swapfil, sfs.σ_swapfil, fu)
-    apply!(
-        Turbulox.tensordissipation_staggered!,
-        g_les,
-        diss.swapfil_symm,
-        sfs.σ_swapfil_symm,
-        fu,
-    )
-    # apply!(Turbulox.tensordissipation_staggered!, g_les, diss.rfu, sfs.rfu, fu)
-    diss = adapt(Array, diss)
-    jldsave(joinpath(datadir, "$(experiment)_diss.jld2"); diss)
-end
-
-using KernelAbstractions
-
-false && let
-    uh = ustart
-    uH = VectorField(g_les)
-    # Turbulox.surfacefilter!(uH, uh, compression)
-    Turbulox.volumefilter!(uH, uh, compression)
-    uh.data[:, :, end, 3] |> Array |> heatmap
-    # uH.data[:, :, end, 3] |> Array |> heatmap
-    # nothing
 end
 
 let
@@ -284,7 +204,7 @@ let
     imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
     image!(Axis(fig[1, 1]; kwargs...), u.data[:, :, end, 1] |> Array; imkwargs...)
     image!(Axis(fig[1, 2]; kwargs...), ubar.data[:, :, end, 1] |> Array; imkwargs...)
-    file = joinpath(plotdir, "ns-fields.png")
+    file = joinpath(plotdir, "ns-fields-$(n_les).png")
     @info "Saving fields plot to $file"
     save(file, fig; backend = CairoMakie)
     fig
@@ -317,123 +237,9 @@ let
         ubar.data[(end-a+1):end, (end-a+1):end, end, 1] |> Array;
         imkwargs...,
     )
-    file = joinpath(plotdir, "ns-fields-zoom.png")
+    file = joinpath(plotdir, "ns-fields-zoom-$(n_les).png")
     @info "Saving fields plot to $file"
     save(file, fig; backend = CairoMakie)
-    fig
-end
-
-let
-    u = ustart
-    ubar = VectorField(g_les)
-    Turbulox.volumefilter!(ubar, u, compression)
-    fig = Figure(; size = (700, 700))
-    kwargs = (;
-        xlabelvisible = false,
-        ylabelvisible = false,
-        xticksvisible = false,
-        yticksvisible = false,
-        xticklabelsvisible = false,
-        yticklabelsvisible = false,
-        aspect = DataAspect(),
-    )
-    a = 30
-    b = 40
-    A = compression * a
-    B = compression * b
-    imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
-    image!(Axis(fig[1, 1]; kwargs...), u.data[:, :, end, 1] |> Array; imkwargs...)
-    image!(Axis(fig[1, 2]; kwargs...), ubar.data[:, :, end, 1] |> Array; imkwargs...)
-    image!(
-        Axis(fig[2, 1]; kwargs...),
-        u.data[(A+1):B, (A+1):B, end, 1] |> Array;
-        imkwargs...,
-    )
-    image!(
-        Axis(fig[2, 2]; kwargs...),
-        ubar.data[(a+1):b, (a+1):b, end, 1] |> Array;
-        imkwargs...,
-    )
-    file = joinpath(plotdir, "ns-fields.png")
-    @info "Saving fields plot to $file"
-    save(file, fig; backend = CairoMakie)
-    fig
-end
-
-let
-    u = ustart
-    ubar = VectorField(g_les)
-    Turbulox.volumefilter!(ubar, u, compression)
-    sfs = NavierStokes.sfs_tensors_volume(;
-        ustart,
-        g_dns,
-        g_les,
-        poisson_dns,
-        poisson_les,
-        viscosity,
-        compression,
-        doproject = false,
-    )
-    @kernel function kernellow(σxx, σxy, σxz, σ, k)
-        i, j = @index(Global, NTuple)
-        x, y, z = X(), Y(), Z()
-        σxx[i, j] = σ[x, x][i, j, k]
-        σxy[i, j] = σ[x, y][i, j, k]
-        σxz[i, j] = σ[x, z][i, j, k]
-    end
-    σxx = similar(u.data, n_les, n_les)
-    σxy = similar(u.data, n_les, n_les)
-    σxz = similar(u.data, n_les, n_les)
-    kernellow(g_les.backend, g_les.workgroupsize)(
-        σxx,
-        σxy,
-        σxz,
-        sfs.σ_swapfil,
-        n_les;
-        ndrange = (n_les, n_les),
-    )
-    u.data[:, :, end, 1] |> Array |> heatmap
-    ubar.data[:, :, end, 1] |> Array |> heatmap
-    σxx |> Array |> heatmap
-    fig = Figure()
-    kwargs = (;
-        xlabelvisible = false,
-        ylabelvisible = false,
-        xticksvisible = false,
-        yticksvisible = false,
-        xticklabelsvisible = false,
-        yticklabelsvisible = false,
-    )
-    heatmap!(Axis(fig[1, 1]; kwargs...), u.data[:, :, end, 1] |> Array)
-    heatmap!(Axis(fig[1, 2]; kwargs...), ubar.data[:, :, end, 1] |> Array)
-    heatmap!(Axis(fig[2, 1]; kwargs...), σxx |> Array)
-    heatmap!(Axis(fig[2, 2]; kwargs...), σxz |> Array)
-    fig
-end
-
-true && let
-    fig = Figure(; size = (400, 300))
-    # ax = Axis(fig[1, 1]; xticks = ([1, 2], ["Classic", "Filter-swap"]))
-    ax = Axis(fig[1, 1]; xticks = (1:4, ["No-model", "Classic", "Swap-sym", "Swap"]))
-    # ax = Axis(fig[1, 1]; xticks = ([1, 2, 3], ["Classic", "Filter-swap", "Stress"]))
-    plot(i, d) = boxplot!(
-        ax,
-        fill(i, length(d)),
-        d;
-        show_outliers = false,
-        whiskerwidth = 0.2,
-        orientation = :vertical,
-    )
-    plot(1, zeros(1))
-    plot(2, diss.classic.data |> vec |> Array)
-    plot(3, diss.swapfil_symm.data |> vec |> Array)
-    plot(4, diss.swapfil.data |> vec |> Array)
-    # plot(5, diss.rfu.data |> vec |> Array)
-    file = joinpath(plotdir, "$(experiment)-ns-dissipation.pdf")
-    @info "Saving dissipation plot to $file"
-    flush(stderr)
-    save(file, fig; backend = CairoMakie)
-    # ylims!(ax, -0.0005, 0.0005)
     fig
 end
 
@@ -441,75 +247,8 @@ true && let
     fig = Figure(; size = (410, 750))
     for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
         islast = i == 3
-        diss = load(joinpath(datadir, "$(experiment)_diss.jld2"), "diss")
-        ax = Axis(
-            fig[i, 1];
-            yscale = log10,
-            xlabel = "Dissipation",
-            ylabel = "Density",
-            xticksvisible = islast,
-            xticklabelsvisible = islast,
-            xlabelvisible = islast,
-        )
-        xlims!(ax, -17, 12)
-        ylims!(ax, 1e-5, 4e-1)
-        plot(i, d, label) = hist!(
-            ax,
-            d;
-            # bins = 100,
-            bins = range(-17, 12, 100),
-            normalization = :probability,
-            # strokewidth = 1,
-            # color = Cycled(i),
-            color = Makie.wong_colors()[i],
-            label,
-        )
-        # plot(d) = density!(ax, d; npoints = 500, strokewidth = 1)
-        plot(4, diss.swapfil.data |> vec |> Array, "Swap")
-        plot(3, diss.swapfil_symm.data |> vec |> Array, "Swap-sym")
-        plot(2, diss.classic.data |> vec |> Array, "Classic")
-        # plot(4, 3e-2 * randn(length(diss.classic.data)), "No-model")
-        vlines!(ax, [0]; color = Cycled(1), label = "No-model")
-        # plot(5, diss.rfu.data |> vec |> Array)
-        i == 1 && Legend(
-            fig[0, 1],
-            ax;
-            tellwidth = false,
-            orientation = :horizontal,
-            # nbanks = 2,
-            framevisible = false,
-        )
-        Label(
-            fig[i, 1],
-            Dict("volavg" => "VA", "project_volavg" => "PVA", "surfavg" => "SA")[experiment];
-            # Dict(
-            #     "volavg" => "Volume-average",
-            #     "project_volavg" => "Projected volume-average",
-            #     "surfavg" => "Surface-average",
-            # )[experiment];
-            # fontsize = 26,
-            font = :bold,
-            padding = (10, 10, 10, 10),
-            halign = :left,
-            valign = :top,
-            tellwidth = false,
-            tellheight = false,
-        )
-    end
-    # rowgap!(fig.layout, 5)
-    file = joinpath(plotdir, "ns-dissipation-hist.pdf")
-    @info "Saving dissipation plot to $file"
-    flush(stderr)
-    save(file, fig; backend = CairoMakie)
-    # ylims!(ax, -0.0005, 0.0005)
-    fig
-end
-
-true && let
-    fig = Figure(; size = (410, 750))
-    for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
-        islast = i == 3
-        diss = load(joinpath(datadir, "$(experiment)_diss.jld2"), "diss")
+        file = joinpath(datadir, "dissipation-$(experiment)-$(n_les).jld2")
+        diss = load(file, "diss")
         ax = Axis(
             fig[i, 1];
             yscale = log10,
@@ -522,8 +261,14 @@ true && let
         # xlims!(ax, -13, 9)
         # ylims!(ax, 7e-5, 2e0)
         #
-        xlims!(ax, -26, 16)
-        ylims!(ax, 7e-5, 1e0)
+        # xlims!(ax, -13.5, 9)
+        # ylims!(ax, 1e-4, 1e0)
+        #
+        xlims!(ax, -8.4, 5)
+        ylims!(ax, 1e-3, 1e0)
+        #
+        # xlims!(ax, -5, 3)
+        # ylims!(ax, 1e-2, 1e0)
         function plot(i, d, label)
             k = kde(d)#; boundary = (-8, 8))
             lines!(
@@ -579,10 +324,10 @@ true && let
         )
     end
     # rowgap!(fig.layout, 5)
-    file = joinpath(plotdir, "ns-dissipation.pdf")
+    file = joinpath(plotdir, "ns-dissipation-$(n_les).pdf")
     @info "Saving dissipation plot to $file"
     flush(stderr)
-    # save(file, fig; backend = CairoMakie)
+    save(file, fig; backend = CairoMakie)
     # ylims!(ax, -0.0005, 0.0005)
     fig
 end

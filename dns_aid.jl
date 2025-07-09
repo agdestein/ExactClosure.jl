@@ -28,8 +28,8 @@ end
 
 begin
     case = NavierStokes.largecase()
-    n_les = 100
-    compression = 5
+    # n_les, compression = 102, 5
+    n_les, compression = 170, 3
 end
 
 begin
@@ -47,76 +47,92 @@ T = typeof(g_dns.L)
 poisson_dns = poissonsolver(g_dns);
 poisson_les = poissonsolver(g_les);
 
-ustart = let
+# ustart = let
+#     path = joinpath(outdir, "u.jld2")
+#     data = path |> load_object |> adapt(g_dns.backend)
+#     VectorField(g_dns, data)
+# end
+
+let
+    cfl = 0.15 |> T
+    tstop = 0.001 |> T
+    # Load initial DNS
     path = joinpath(outdir, "u.jld2")
     data = path |> load_object |> adapt(g_dns.backend)
-    VectorField(g_dns, data)
-end
-
-@info "Running experiment"
-flush(stderr)
-
-experiment = "volavg"
-sols, relerr = NavierStokes.dns_aid_volavg(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = false,
-);
-
-experiment = "project_volavg"
-sols, relerr = NavierStokes.dns_aid_volavg(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = true,
-);
-
-experiment = "surfavg"
-sols, relerr = NavierStokes.dns_aid_surface(;
-    ustart,
-    g_dns,
-    g_les,
-    poisson_dns,
-    poisson_les,
-    viscosity,
-    compression,
-    doproject = true,
-);
-
-# plotdir = "~/Projects/StructuralErrorPaper/figures/$experiment" |> expanduser |> mkpath
-
-@info "Saving results"
-flush(stderr)
-
-jldsave(joinpath(datadir, "$(experiment)_relerr.jld2"); relerr)
-
-# Compute spectra
-let
-    diss = ScalarField(g_dns)
-    apply!(Turbulox.dissipation!, g_dns, diss, sols.dns_ref, viscosity)
-    D = sum(diss.data) / length(diss)
-    diss = nothing # free up memory
-    specs = map(sols) do u
-        stuff = spectral_stuff(u.grid)
-        spectrum(u; stuff)
+    ustart = VectorField(g_dns, data)
+    for experiment in ["volavg", "project_volavg", "surfavg"]
+        @info "Running experiment: $(experiment)"
+        flush(stderr)
+        if experiment == "volavg"
+            sols, relerr = NavierStokes.dns_aid_volavg(;
+                ustart,
+                g_dns,
+                g_les,
+                poisson_dns,
+                poisson_les,
+                viscosity,
+                compression,
+                doproject = false,
+                docopy = false,
+                tstop,
+                cfl,
+            )
+        elseif experiment == "project_volavg"
+            sols, relerr = NavierStokes.dns_aid_volavg(;
+                ustart,
+                g_dns,
+                g_les,
+                poisson_dns,
+                poisson_les,
+                viscosity,
+                compression,
+                doproject = true,
+                docopy = false,
+                tstop,
+                cfl,
+            )
+        elseif experiment == "surfavg"
+            sols, relerr = NavierStokes.dns_aid_surface(;
+                ustart,
+                g_dns,
+                g_les,
+                poisson_dns,
+                poisson_les,
+                viscosity,
+                compression,
+                doproject = true,
+                docopy = false,
+                tstop,
+                cfl,
+            )
+        end
+        # Save errors
+        file = joinpath(datadir, "relerr-$(experiment)-$(n_les).jld2")
+        @info "Saving errors to $(file)"
+        flush(stderr)
+        jldsave(file; relerr)
+        # Compute spectra
+        diss = ScalarField(g_dns)
+        apply!(Turbulox.dissipation!, g_dns, diss, sols.dns_ref, viscosity)
+        D = sum(diss.data) / length(diss)
+        diss = nothing # free up memory
+        specs = map(sols) do u
+            stuff = spectral_stuff(u.grid)
+            spectrum(u; stuff)
+        end
+        file = joinpath(datadir, "spectra-$(experiment)-$(n_les).jld2")
+        @info "Saving spectra to $(file)"
+        flush(stderr)
+        jldsave(file; specs, D)
+        sols = nothing # free up memory
     end
-    jldsave(joinpath(datadir, "$(experiment)_spectra.jld2"); specs, D)
 end
 
 let
     fig = Figure(; size = (410, 750))
     for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
         islast = i == 3
-        relerr = load(joinpath(datadir, "$(experiment)_relerr.jld2"), "relerr")
+        relerr = load(joinpath(datadir, "relerr-$(experiment)-$(n_les).jld2"), "relerr")
         ax = Axis(
             fig[i, 1];
             xlabel = "Time",
@@ -158,7 +174,7 @@ let
     # rowgap!(fig.layout, 5)
     # rowgap!(fig.layout, 10)
     # ylims!(ax, -0.03, 0.34)
-    file = joinpath(plotdir, "ns-error.pdf")
+    file = joinpath(plotdir, "ns-error-$(n_les).pdf")
     @info "Saving error plot to $file"
     flush(stderr)
     save(file, fig; backend = CairoMakie)
@@ -170,7 +186,8 @@ let
     fig = Figure(; size = (400, 750))
     for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
         islast = i == 3
-        specs, D = load(joinpath(datadir, "$(experiment)_spectra.jld2"), "specs", "D")
+        specs, D =
+            load(joinpath(datadir, "spectra-$(experiment)-$(n_les).jld2"), "specs", "D")
         xslope = specs.dns_ref.k[8:(end-12)]
         yslope = @. 1.58 * D^(2 / 3) * (2π * xslope)^(-5 / 3)
         specs = (; specs..., kolmogo = (; k = xslope, s = yslope))
@@ -241,7 +258,7 @@ let
     # vlines!(ax_full, 150)
     # ylims!(ax_full, 1e-4, 1e-1)
     # rowgap!(fig.layout, 5)
-    file = joinpath(plotdir, "ns-spectra.pdf")
+    file = joinpath(plotdir, "ns-spectra-$(n_les).pdf")
     @info "Saving spectrum plot to $file"
     flush(stderr)
     save(file, fig; backend = CairoMakie)
