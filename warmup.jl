@@ -3,7 +3,7 @@ if false
     using .StructuralClosure
 end
 
-# For getting logging without delay on SLURM
+# For logging to stderr without delay on SLURM
 macro flushinfo(msg)
     esc(quote
         @info $msg
