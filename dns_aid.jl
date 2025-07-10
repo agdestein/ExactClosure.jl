@@ -20,28 +20,28 @@ using WGLMakie
 @info "Loading case"
 flush(stderr)
 
-begin
-    case = NavierStokes.smallcase()
-    n_les = 50
-    compression = 3
-end
+# begin
+#     case = NavierStokes.smallcase()
+#     n_les = 50
+#     compression = 3
+# end
 
-begin
-    case = NavierStokes.largecase()
-    # n_les, compression = 102, 5
-    n_les, compression = 170, 3
-end
+# begin
+#     case = NavierStokes.largecase()
+#     # n_les, compression = 102, 5
+#     n_les, compression = 170, 3
+# end
 
-begin
-    case = NavierStokes.snelliuscase()
-    n_les = 160
-    compression = 5
-end
+# begin
+#     case = NavierStokes.snelliuscase()
+#     n_les = 160
+#     compression = 5
+# end
 
 begin
     case = NavierStokes.newcase()
     n_les, compression = 270, 3
-    # n_les, compression = 165, 5
+    # n_les, compression = 162, 5
 end
 
 (; viscosity, outdir, datadir, plotdir, seed) = case
@@ -62,13 +62,16 @@ poisson_les = poissonsolver(g_les);
 let
     cfl = 0.15 |> T
     tstop = 0.1 |> T
-    # Load initial DNS
-    path = joinpath(outdir, "u.jld2")
-    data = path |> load_object |> adapt(g_dns.backend)
-    ustart = VectorField(g_dns, data)
-    for experiment in ["volavg", "project_volavg", "surfavg"]
+    for (i, experiment) in enumerate([
+                                      # "volavg", "project_volavg",
+                                      "surfavg"])
+        # parse(Int, ENV["SLURM_ARRAY_TASK_ID"]) == i || continue
         @info "Running experiment: $(experiment)"
         flush(stderr)
+        # Load initial DNS
+        path = joinpath(outdir, "u.jld2")
+        data = path |> load_object |> adapt(g_dns.backend)
+        ustart = VectorField(g_dns, data)
         if experiment == "volavg"
             sols, relerr = NavierStokes.dns_aid_volavg(;
                 ustart,
@@ -131,6 +134,19 @@ let
         flush(stderr)
         jldsave(file; specs, D)
         sols = nothing # free up memory
+    end
+end
+
+@info "Done."
+flush(stderr)
+exit()
+
+let
+    @show n_les
+    for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
+        relerr = load(joinpath(datadir, "relerr-$(experiment)-$(n_les).jld2"), "relerr")
+        @show experiment
+        map(last, relerr) |> pairs |> display
     end
 end
 
@@ -237,7 +253,7 @@ let
         # axislegend(ax_full; position = :lb)
         Label(
             fig[i, 1],
-            Dict("volavg" => "VA", "project_volavg" => "PVA", "surfavg" => "SA")[experiment];
+             Dict("volavg" => "VA", "project_volavg" => "PVA", "surfavg" => "SA")[experiment];
             # Dict(
             #     "volavg" => "Volume-average",
             #     "project_volavg" => "Projected volume-average",
