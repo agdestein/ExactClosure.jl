@@ -327,14 +327,6 @@ let
     fig
 end
 
-diss = let
-    experiment = "volavg"
-    n_les = 102
-    file = joinpath(datadir, "dissipation-$(experiment)-$(n_les).jld2")
-    diss = load(file, "diss")
-    k = map(x -> (x.data |> vec |> kde |> x -> (; x.x, x.density)), diss)
-end
-
 # Dissipation
 let
     fig = Figure(; size = (900, 400))
@@ -356,8 +348,8 @@ let
             yticklabelsvisible = jfirst,
             ylabelvisible = jfirst,
         )
-        xlims!(ax, -6, 4)
-        ylims!(ax, 1e-3, 3e0)
+        # limits!(ax, (-6, 4), (1e-3, 3e0))
+        limits!(ax, (-9, 6.3), (1e-4, 3e0))
         plot(i, d, label) = lines!(ax, d.x, d.density; color = Cycled(i), label)
         vlines!(ax, [0]; color = Cycled(1), label = "No-model")
         # plot(1, 3e-2 * randn(length(diss.classic.data)), "No-model")

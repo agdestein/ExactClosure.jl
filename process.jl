@@ -31,7 +31,6 @@ case = NavierStokes.newcase()
 g_dns = case.grid
 g_les = map(n -> Grid(; g_dns.ho, g_dns.backend, g_dns.L, n), n_les);
 T = typeof(g_dns.L)
-@assert all(==(g_dns.n), n_les .* compression)
 
 # plotdir = "~/Projects/StructuralErrorPaper/figures" |> expanduser
 
@@ -107,7 +106,8 @@ flush(stderr)
 
 let
     u = ustart
-    for (poisson_les, g_les, n_les, compression) in zip(poisson_les, g_les, n_les,  compression)
+    for (poisson_les, g_les, n_les, compression) in
+        zip(poisson_les, g_les, n_les, compression)
         fu = VectorField(g_les)
         for experiment in ["volavg", "project_volavg", "surfavg"]
             @info "Experiment: $experiment"
@@ -193,9 +193,12 @@ end
 
 let
     u = ustart
-    ubar = VectorField(g_les)
-    Turbulox.volumefilter!(ubar, u, compression)
-    fig = Figure(; size = (900, 450))
+    ubar = map(g_les, compression) do g_les, compression
+        v = VectorField(g_les)
+        Turbulox.volumefilter!(v, u, compression)
+        v
+    end
+    fig = Figure(; size = (800, 800))
     kwargs = (;
         xlabelvisible = false,
         ylabelvisible = false,
@@ -216,9 +219,12 @@ end
 
 let
     u = ustart
-    ubar = VectorField(g_les)
-    Turbulox.volumefilter!(ubar, u, compression)
-    fig = Figure(; size = (700, 350))
+    ubar = map(g_les, compression) do g_les, compression
+        v = VectorField(g_les)
+        Turbulox.volumefilter!(v, u, compression)
+        v
+    end
+    fig = Figure(; size = (750, 250))
     kwargs = (;
         xlabelvisible = false,
         ylabelvisible = false,
@@ -228,20 +234,24 @@ let
         yticklabelsvisible = false,
         aspect = DataAspect(),
     )
-    a = 30
-    A = compression * a
+    A = 90
     imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
+    i = 1
     image!(
         Axis(fig[1, 1]; kwargs...),
-        u.data[(end-A+1):end, (end-A+1):end, end, 1] |> Array;
+        u.data[(end-A+1):end, (end-A+1):end, end, i] |> Array;
         imkwargs...,
     )
-    image!(
-        Axis(fig[1, 2]; kwargs...),
-        ubar.data[(end-a+1):end, (end-a+1):end, end, 1] |> Array;
-        imkwargs...,
-    )
-    file = joinpath(plotdir, "ns-fields-zoom-$(n_les).png")
+    for j = 1:length(ubar)
+        v, c = ubar[j], compression[j]
+        a = div(A, c)
+        image!(
+            Axis(fig[1, 1+(length(ubar)+1-j)]; kwargs...),
+            v.data[(end-a+1):end, (end-a+1):end, end, i] |> Array;
+            imkwargs...,
+        )
+    end
+    file = joinpath(plotdir, "ns-fields.png")
     @info "Saving fields plot to $file"
     save(file, fig; backend = CairoMakie)
     fig
