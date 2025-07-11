@@ -20,35 +20,15 @@ using WGLMakie
 @info "Loading case"
 flush(stderr)
 
-# begin
-#     case = NavierStokes.smallcase()
-#     n_les = 50
-#     compression = 3
-# end
+case = NavierStokes.smallcase()
+case = NavierStokes.largecase()
+case = NavierStokes.snelliuscase()
+case = NavierStokes.newcase()
 
-# begin
-#     case = NavierStokes.largecase()
-#     # n_les, compression = 102, 5
-#     n_les, compression = 170, 3
-# end
-
-# begin
-#     case = NavierStokes.snelliuscase()
-#     n_les = 160
-#     compression = 5
-# end
-
-begin
-    case = NavierStokes.newcase()
-    n_les, compression = 270, 3
-    # n_les, compression = 162, 5
-end
-
-(; viscosity, outdir, datadir, plotdir, seed) = case
+(; viscosity, outdir, datadir, plotdir, seed, n_les, compression) = case
 g_dns = case.grid
 g_les = Grid(; g_dns.ho, g_dns.backend, g_dns.L, n = n_les)
 T = typeof(g_dns.L)
-@assert n_les * compression == g_dns.n
 
 poisson_dns = poissonsolver(g_dns);
 poisson_les = poissonsolver(g_les);
@@ -62,9 +42,7 @@ poisson_les = poissonsolver(g_les);
 let
     cfl = 0.15 |> T
     tstop = 0.1 |> T
-    for (i, experiment) in enumerate([
-                                      # "volavg", "project_volavg",
-                                      "surfavg"])
+    for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
         # parse(Int, ENV["SLURM_ARRAY_TASK_ID"]) == i || continue
         @info "Running experiment: $(experiment)"
         flush(stderr)
@@ -146,7 +124,7 @@ let
     for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
         relerr = load(joinpath(datadir, "relerr-$(experiment)-$(n_les).jld2"), "relerr")
         @show experiment
-        map(last, relerr) |> pairs |> display
+        map(x -> round(x[end]; sigdigits = 3), relerr) |> pairs |> display
     end
 end
 
@@ -253,7 +231,7 @@ let
         # axislegend(ax_full; position = :lb)
         Label(
             fig[i, 1],
-             Dict("volavg" => "VA", "project_volavg" => "PVA", "surfavg" => "SA")[experiment];
+            Dict("volavg" => "VA", "project_volavg" => "PVA", "surfavg" => "SA")[experiment];
             # Dict(
             #     "volavg" => "Volume-average",
             #     "project_volavg" => "Projected volume-average",

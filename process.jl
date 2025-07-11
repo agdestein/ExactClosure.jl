@@ -22,40 +22,21 @@ using WriteVTK
 @info "Loading case"
 flush(stderr)
 
-begin
-    case = NavierStokes.smallcase()
-    n_les = 50
-    compression = 3
-end
+case = NavierStokes.smallcase()
+case = NavierStokes.largecase()
+case = NavierStokes.snelliuscase()
+case = NavierStokes.newcase()
 
-begin
-    case = NavierStokes.largecase()
-    # n_les, compression = 102, 5
-    n_les, compression = 170, 3
-end
-
-begin
-    case = NavierStokes.snelliuscase()
-    n_les = 160
-    compression = 5
-end
-
-begin
-    case = NavierStokes.newcase()
-    n_les, compression = 270, 3
-    # n_les, compression = 165, 5
-end
-
-(; viscosity, outdir, datadir, plotdir, seed) = case
+(; viscosity, outdir, datadir, plotdir, seed, n_les, compression) = case
 g_dns = case.grid
-g_les = Grid(; g_dns.ho, g_dns.backend, g_dns.L, n = n_les)
+g_les = map(n -> Grid(; g_dns.ho, g_dns.backend, g_dns.L, n), n_les);
 T = typeof(g_dns.L)
-@assert n_les * compression == g_dns.n
+@assert all(==(g_dns.n), n_les .* compression)
 
 # plotdir = "~/Projects/StructuralErrorPaper/figures" |> expanduser
 
 poisson_dns = poissonsolver(g_dns);
-poisson_les = poissonsolver(g_les);
+poisson_les = map(g -> poissonsolver(g), g_les);
 
 ustart = let
     path = joinpath(outdir, "u.jld2")
@@ -121,89 +102,92 @@ false && let
     end
 end
 
-@info "Computing SFS tensors"
+@info "Computing dissipation coefficient density"
 flush(stderr)
 
 let
     u = ustart
-    fu = VectorField(g_les)
-    for experiment in ["volavg", "project_volavg", "surfavg"]
-        @info "Experiment: $experiment"
-        flush(stderr)
-        if experiment == "volavg"
-            sfs = NavierStokes.sfs_tensors_volume(;
-                ustart,
-                g_dns,
-                g_les,
-                poisson_dns,
-                poisson_les,
-                viscosity,
-                compression,
-                doproject = false,
+    for (poisson_les, g_les, n_les, compression) in zip(poisson_les, g_les, n_les,  compression)
+        fu = VectorField(g_les)
+        for experiment in ["volavg", "project_volavg", "surfavg"]
+            @info "Experiment: $experiment"
+            flush(stderr)
+            if experiment == "volavg"
+                sfs = NavierStokes.sfs_tensors_volume(;
+                    ustart,
+                    g_dns,
+                    g_les,
+                    poisson_dns,
+                    poisson_les,
+                    viscosity,
+                    compression,
+                    doproject = false,
+                )
+                volumefilter!(fu, u, compression)
+            elseif experiment == "project_volavg"
+                sfs = NavierStokes.sfs_tensors_volume(;
+                    ustart,
+                    g_dns,
+                    g_les,
+                    poisson_dns,
+                    poisson_les,
+                    viscosity,
+                    compression,
+                    doproject = true,
+                )
+                volumefilter!(fu, u, compression)
+                p = ScalarField(g_les)
+                project!(fu, p, poisson_les)
+            elseif experiment == "surfavg"
+                sfs = NavierStokes.sfs_tensors_surface(;
+                    ustart,
+                    g_dns,
+                    g_les,
+                    poisson_dns,
+                    poisson_les,
+                    viscosity,
+                    compression,
+                    doproject = false,
+                )
+                surfacefilter!(fu, u, compression)
+            else
+                error("Unknown experiment: $experiment")
+            end
+            diss = (;
+                classic = ScalarField(g_les),
+                swapfil = ScalarField(g_les),
+                swapfil_symm = ScalarField(g_les),
+                # rfu = ScalarField(g_les),
             )
-            volumefilter!(fu, u, compression)
-        elseif experiment == "project_volavg"
-            sfs = NavierStokes.sfs_tensors_volume(;
-                ustart,
-                g_dns,
+            apply!(
+                Turbulox.tensordissipation_staggered!,
                 g_les,
-                poisson_dns,
-                poisson_les,
-                viscosity,
-                compression,
-                doproject = true,
+                diss.classic,
+                sfs.σ_classic,
+                fu,
             )
-            volumefilter!(fu, u, compression)
-            p = ScalarField(g_les)
-            project!(fu, p, poisson_les)
-        elseif experiment == "surfavg"
-            sfs = NavierStokes.sfs_tensors_surface(;
-                ustart,
-                g_dns,
+            apply!(
+                Turbulox.tensordissipation_staggered!,
                 g_les,
-                poisson_dns,
-                poisson_les,
-                viscosity,
-                compression,
-                doproject = false,
+                diss.swapfil,
+                sfs.σ_swapfil,
+                fu,
             )
-            surfacefilter!(fu, u, compression)
-        else
-            error("Unknown experiment: $experiment")
+            apply!(
+                Turbulox.tensordissipation_staggered!,
+                g_les,
+                diss.swapfil_symm,
+                sfs.σ_swapfil_symm,
+                fu,
+            )
+            # apply!(Turbulox.tensordissipation_staggered!, g_les, diss.rfu, sfs.rfu, fu)
+            diss = adapt(Array, diss)
+            density = map(d -> (d.data |> vec |> kde |> x -> (; x.x, x.density)), diss)
+            file = joinpath(datadir, "dissipation-$(experiment)-$(n_les).jld2")
+            @info "Saving dissipation density to $file"
+            flush(stderr)
+            jldsave(file; density)
         end
-        diss = (;
-            classic = ScalarField(g_les),
-            swapfil = ScalarField(g_les),
-            swapfil_symm = ScalarField(g_les),
-            # rfu = ScalarField(g_les),
-        )
-        apply!(
-            Turbulox.tensordissipation_staggered!,
-            g_les,
-            diss.classic,
-            sfs.σ_classic,
-            fu,
-        )
-        apply!(
-            Turbulox.tensordissipation_staggered!,
-            g_les,
-            diss.swapfil,
-            sfs.σ_swapfil,
-            fu,
-        )
-        apply!(
-            Turbulox.tensordissipation_staggered!,
-            g_les,
-            diss.swapfil_symm,
-            sfs.σ_swapfil_symm,
-            fu,
-        )
-        # apply!(Turbulox.tensordissipation_staggered!, g_les, diss.rfu, sfs.rfu, fu)
-        diss = adapt(Array, diss)
-        file = joinpath(datadir, "dissipation-$(experiment)-$(n_les).jld2")
-        @info "Saving dissipation to $file"
-        flush(stderr)
-        jldsave(file; diss)
     end
 end
 
@@ -264,6 +248,7 @@ let
 end
 
 true && let
+    n_les = Main.n_les[1]
     fig = Figure(; size = (410, 750))
     for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
         islast = i == 3

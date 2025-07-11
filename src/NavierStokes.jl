@@ -38,7 +38,9 @@ function largecase()
     plotdir = joinpath(outdir, "plots") |> mkpath
     totalenergy = T(1 / 2)
     kpeak = 5
-    (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak)
+    n_les, compression = [102, 170], [5, 3]
+    @assert all(==(grid.n), n_les .* compression)
+    (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak, n_les, compression)
 end
 
 "New test case."
@@ -48,12 +50,15 @@ function newcase()
     T = Float64
     grid = Grid(; L = T(1), n = 810, backend = get_backend())
     viscosity = 1 / 40_000 |> T
+    # outdir = joinpath(@__DIR__, "..", "output", "newcase") |> mkpath
     outdir = joinpath(ENV["DEEPDIP"], "ExactClosure", "newcase") |> mkpath
     datadir = joinpath(outdir, "data") |> mkpath
     plotdir = joinpath(outdir, "plots") |> mkpath
     totalenergy = T(1 / 2)
     kpeak = 5
-    (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak)
+    n_les, compression = [162, 270], [5, 3]
+    @assert all(==(grid.n), n_les .* compression)
+    (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak, n_les, compression)
 end
 
 "Large test case."
