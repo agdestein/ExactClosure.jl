@@ -224,7 +224,7 @@ let
         Turbulox.volumefilter!(v, u, compression)
         v
     end
-    fig = Figure(; size = (750, 250))
+    fig = Figure(; size = (860, 300))
     kwargs = (;
         xlabelvisible = false,
         ylabelvisible = false,
@@ -251,7 +251,7 @@ let
             imkwargs...,
         )
     end
-    file = joinpath(plotdir, "ns-fields.png")
+    file = joinpath(plotdir, "ns-fields-zoom.png")
     @info "Saving fields plot to $file"
     save(file, fig; backend = CairoMakie)
     fig
