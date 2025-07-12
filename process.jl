@@ -32,8 +32,6 @@ g_dns = case.grid
 g_les = map(n -> Grid(; g_dns.ho, g_dns.backend, g_dns.L, n), n_les);
 T = typeof(g_dns.L)
 
-# plotdir = "~/Projects/StructuralErrorPaper/figures" |> expanduser
-
 poisson_dns = poissonsolver(g_dns);
 poisson_les = map(g -> poissonsolver(g), g_les);
 
@@ -41,15 +39,6 @@ ustart = let
     path = joinpath(outdir, "u.jld2")
     data = path |> load_object |> adapt(g_dns.backend)
     VectorField(g_dns, data)
-end
-
-let
-    stuff = Turbulox.spectral_stuff(g_dns)
-    spec = Turbulox.spectrum(ustart; stuff)
-    fig = lines(spec.k, spec.s; axis = (; yscale = log10, xscale = log10))
-    kk = spec.k[10:end]
-    lines!(kk, 4e-1 * kk .^ (-5/3))
-    fig
 end
 
 s = get_scale_numbers(ustart, viscosity)

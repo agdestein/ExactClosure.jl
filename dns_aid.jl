@@ -40,10 +40,10 @@ poisson_dns = poissonsolver(g_dns);
 
 let
     cfl = 0.15 |> T
-    tstop = 0.001 |> T
+    tstop = 0.1 |> T
     for j in eachindex(n_les),
         (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
-        # parse(Int, ENV["SLURM_ARRAY_TASK_ID"]) == i || continue
+        # parse(Int, ENV["SLURM_ARRAY_TASK_ID"]) == i + 3 * (j - 1) || continue
         @info "Running experiment: $(experiment)"
         flush(stderr)
         g_les = Main.g_les[j]
