@@ -43,6 +43,15 @@ ustart = let
     VectorField(g_dns, data)
 end
 
+let
+    stuff = Turbulox.spectral_stuff(g_dns)
+    spec = Turbulox.spectrum(ustart; stuff)
+    fig = lines(spec.k, spec.s; axis = (; yscale = log10, xscale = log10))
+    kk = spec.k[10:end]
+    lines!(kk, 4e-1 * kk .^ (-5/3))
+    fig
+end
+
 s = get_scale_numbers(ustart, viscosity)
 s |> pairs
 1 / s.λ
