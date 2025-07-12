@@ -155,7 +155,7 @@ let
         specs, D =
             load(joinpath(datadir, "spectra-$(experiment)-$(n_les).jld2"), "specs", "D")
         xslope = specs.dns_ref.k[8:(end-12)]
-        yslope = @. 1.58 * D^(2 / 3) * (2π * xslope)^(-5 / 3)
+        yslope = @. 1.58 * D^(2 / 3) * (xslope)^(-5 / 3)
         specs = (; specs..., kolmogo = (; k = xslope, s = yslope))
         ax_full = Makie.Axis(
             fig[i, j];

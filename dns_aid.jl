@@ -27,11 +27,10 @@ case = NavierStokes.newcase()
 
 (; viscosity, outdir, datadir, plotdir, seed, n_les, compression) = case
 g_dns = case.grid
-g_les = Grid(; g_dns.ho, g_dns.backend, g_dns.L, n = n_les)
+g_les = map(n -> Grid(; g_dns.backend, g_dns.L, n), n_les)
 T = typeof(g_dns.L)
 
 poisson_dns = poissonsolver(g_dns);
-poisson_les = poissonsolver(g_les);
 
 # ustart = let
 #     path = joinpath(outdir, "u.jld2")
@@ -41,11 +40,16 @@ poisson_les = poissonsolver(g_les);
 
 let
     cfl = 0.15 |> T
-    tstop = 0.1 |> T
-    for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
+    tstop = 0.001 |> T
+    for j in eachindex(n_les),
+        (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
         # parse(Int, ENV["SLURM_ARRAY_TASK_ID"]) == i || continue
         @info "Running experiment: $(experiment)"
         flush(stderr)
+        g_les = Main.g_les[j]
+        n_les = Main.n_les[j]
+        compression = Main.compression[j]
+        poisson_les = poissonsolver(g_les)
         # Load initial DNS
         path = joinpath(outdir, "u.jld2")
         data = path |> load_object |> adapt(g_dns.backend)
@@ -120,11 +124,25 @@ flush(stderr)
 exit()
 
 let
-    @show n_les
-    for (i, experiment) in enumerate(["volavg", "project_volavg", "surfavg"])
+    println("Filter & \$N_H\$ & No-model & Classic & Swap-sym & Swap \\\\")
+    experiments = ["volavg", "project_volavg", "surfavg"]
+    for n_les in n_les, (i, experiment) in enumerate(experiments)
         relerr = load(joinpath(datadir, "relerr-$(experiment)-$(n_les).jld2"), "relerr")
-        @show experiment
-        map(x -> round(x[end]; sigdigits = 3), relerr) |> pairs |> display
+        r = map(x -> round(x[end]; sigdigits = 3), relerr)
+        println(
+            join(
+                [
+                    Dict("volavg" => "VA ", "project_volavg" => "PVA", "surfavg" => "SA ")[experiment],
+                    string(n_les),
+                    r.nomodel,
+                    r.classic,
+                    r.swapfil_symm,
+                    r.swapfil,
+                ],
+                " & ",
+            )...,
+            " \\\\",
+        )
     end
 end
 

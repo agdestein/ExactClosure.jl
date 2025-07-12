@@ -40,7 +40,18 @@ function largecase()
     kpeak = 5
     n_les, compression = [102, 170], [5, 3]
     @assert all(==(grid.n), n_les .* compression)
-    (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak, n_les, compression)
+    (;
+        seed,
+        grid,
+        viscosity,
+        outdir,
+        datadir,
+        plotdir,
+        totalenergy,
+        kpeak,
+        n_les,
+        compression,
+    )
 end
 
 "New test case."
@@ -58,7 +69,18 @@ function newcase()
     kpeak = 5
     n_les, compression = [162, 270], [5, 3]
     @assert all(==(grid.n), n_les .* compression)
-    (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak, n_les, compression)
+    (;
+        seed,
+        grid,
+        viscosity,
+        outdir,
+        datadir,
+        plotdir,
+        totalenergy,
+        kpeak,
+        n_les,
+        compression,
+    )
 end
 
 "Large test case."
