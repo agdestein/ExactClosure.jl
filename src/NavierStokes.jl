@@ -12,7 +12,7 @@ using StaticArrays
 get_backend() = CUDA.functional() ? CUDABackend() : CPU()
 
 "Test case."
-function getcase(;
+function testcase(;
     outdir,
     viscosity,
     n_dns,
@@ -45,21 +45,21 @@ function getcase(;
 end
 
 "Prototype test case. Can be run on a laptop."
-smallcase() = getcase(;
+smallcase() = testcase(;
     viscosity = 5e-4,
     n_dns = 90,
     outdir = joinpath(@__DIR__, "..", "output", "smallcase"),
 )
 
 "Medium size test case. Can be run on 24 GB GPU."
-mediumcase() = getcase(;
+mediumcase() = testcase(;
     viscosity = 5e-5,
     n_dns = 510,
     outdir = joinpath(@__DIR__, "..", "output", "mediumcase"),
 )
 
 "Large test case (used in paper). Requires a 90 GB GPU (H100)."
-largecase() = getcase(;
+largecase() = testcase(;
     viscosity = 2.5e-5,
     n_dns = 810,
     # outdir = joinpath(ENV["DEEPDIP"], "ExactClosure", "largecase"),
@@ -147,109 +147,6 @@ function fe_step!(du, u, cache, Δt, poisson)
     (; p) = cache
     axpy!(Δt, du.data, u.data)
     project!(u, p, poisson)
-end
-
-function dns_aid(; ustart, g_dns, g_les, poisson_dns, poisson_les, viscosity, compression)
-    cache_dns = (; du = VectorField(g_dns), p = ScalarField(g_dns))
-    cache_les = (; du = VectorField(g_les), p = ScalarField(g_les))
-    T = typeof(g_dns.L)
-    udns = VectorField(g_dns, copy(ustart.data))
-    t = 0 |> T
-    cfl = 0.15 |> T
-    tstop = 0.1 |> T
-    fru = TensorField(g_les)
-    firu = TensorField(g_les)
-    fu = VectorField(g_les)
-    Turbulox.volumefilter!(fu, udns, compression)
-    unomodel = VectorField(g_les, copy(fu.data)) # Not divergence-free
-    project!(unomodel, cache_les.p, poisson_les) # Make divergence free
-    u = (;
-        dns_ref = udns,
-        dns_fil = fu,
-        nomodel = unomodel,
-        classic = VectorField(g_les, copy(unomodel.data)),
-        swapfil = VectorField(g_les, copy(unomodel.data)),
-        swapfil_symm = VectorField(g_les, copy(unomodel.data)),
-    )
-    relerr = (;
-        time = zeros(0),
-        nomodel = zeros(0),
-        classic = zeros(0),
-        swapfil = zeros(0),
-        swapfil_symm = zeros(0),
-    )
-    i = 0
-    while t < tstop
-        # Skip first iter to get initial errors
-        if i > 0
-            ru = stresstensor(u.dns_ref, viscosity)
-            rfu = stresstensor(u.dns_fil, viscosity)
-            Turbulox.volumefilter!(fru, ru, compression)
-            Turbulox.surfacefilter!(firu, ru, compression, false)
-
-            # DNS
-            Δt = cfl * propose_timestep(u.dns_ref, viscosity)
-            Δt = min(Δt, tstop - t)
-            right_hand_side!(cache_dns.du, u.dns_ref; viscosity)
-            fe_step!(cache_dns.du, u.dns_ref, cache_dns, Δt, poisson_dns)
-
-            # No-model
-            right_hand_side!(cache_les.du, u.nomodel; viscosity)
-            fe_step!(cache_les.du, u.nomodel, cache_les, Δt, poisson_les)
-
-            # Classic
-            right_hand_side!(cache_les.du, u.classic; viscosity)
-            σ_classic = LazyTensorField(
-                g_les,
-                (fru, rfu, i, j, I) -> fru[i, j][I] - rfu[i, j][I],
-                fru,
-                rfu,
-            )
-            apply!(tensordivergence!, g_les, cache_les.du, σ_classic)
-            fe_step!(cache_les.du, u.classic, cache_les, Δt, poisson_les)
-
-            # Swap-filter
-            right_hand_side!(cache_les.du, u.swapfil; viscosity)
-            σ_swapfil = LazyTensorField(
-                g_les,
-                (firu, rfu, i, j, I) -> firu[i, j][I] - rfu[i, j][I],
-                firu,
-                rfu,
-            )
-            apply!(tensordivergence!, g_les, cache_les.du, σ_swapfil)
-            fe_step!(cache_les.du, u.swapfil, cache_les, Δt, poisson_les)
-
-            # Swap-filter-symmetrized
-            right_hand_side!(cache_les.du, u.swapfil_symm; viscosity)
-            σ_swapfil_symm = LazyTensorField(
-                g_les,
-                (σ, i, j, I) -> (σ[i, j][I] + σ[j, i][I]) / 2,
-                σ_swapfil,
-            )
-            apply!(tensordivergence!, g_les, cache_les.du, σ_swapfil_symm)
-            fe_step!(cache_les.du, u.swapfil_symm, cache_les, Δt, poisson_les)
-
-            # Filtered DNS. Must be last! Otherwise it will modify the lazy
-            # tensors that depend on u.dns_fil
-            Turbulox.volumefilter!(u.dns_fil, u.dns_ref, compression)
-
-            # Update time
-            t += Δt
-        end
-        push!(relerr.time, t)
-        push!(relerr.nomodel, norm(u.nomodel.data - u.dns_fil.data) / norm(u.dns_fil.data))
-        push!(relerr.classic, norm(u.classic.data - u.dns_fil.data) / norm(u.dns_fil.data))
-        push!(relerr.swapfil, norm(u.swapfil.data - u.dns_fil.data) / norm(u.dns_fil.data))
-        push!(
-            relerr.swapfil_symm,
-            norm(u.swapfil_symm.data - u.dns_fil.data) / norm(u.dns_fil.data),
-        )
-        i += 1
-        @show t
-        flush(stdout)
-    end
-    Turbulox.volumefilter!(u.dns_fil, u.dns_ref, compression)
-    u, relerr
 end
 
 function dns_aid_volavg(;
