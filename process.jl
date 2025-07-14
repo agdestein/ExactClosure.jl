@@ -1,7 +1,7 @@
 # This is just a hack for "go to definition" to work in editor.
 if false
-    include("src/StructuralClosure.jl")
-    using .StructuralClosure
+    include("src/ExactClosure.jl")
+    using .ExactClosure
 end
 
 @info "Loading packages"
@@ -14,7 +14,7 @@ using JLD2
 using KernelDensity
 using LinearAlgebra
 using Random
-using StructuralClosure: NavierStokes
+using ExactClosure: NavierStokes
 using Turbulox
 using Turbulox.KernelAbstractions
 using WGLMakie

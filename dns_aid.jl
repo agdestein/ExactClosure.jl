@@ -1,6 +1,6 @@
 if false
-    include("src/StructuralClosure.jl")
-    using .StructuralClosure
+    include("src/ExactClosure.jl")
+    using .ExactClosure
 end
 
 @info "Loading packages"
@@ -11,7 +11,7 @@ using CUDA
 using JLD2
 using LinearAlgebra
 using Printf
-using StructuralClosure: NavierStokes
+using ExactClosure: NavierStokes
 using Turbulox
 
 @info "Loading case"

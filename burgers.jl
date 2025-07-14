@@ -3,16 +3,16 @@
 # Run with `julia -t auto` to run the simulations in parallel.
 
 if false
-    include("src/StructuralClosure.jl")
-    using .StructuralClosure
+    include("src/ExactClosure.jl")
+    using .ExactClosure
 end
 
 using CairoMakie
 using FFTW
 using LinearAlgebra
 using Random
-using StructuralClosure
-using StructuralClosure.Burgers
+using ExactClosure
+using ExactClosure.Burgers
 using WGLMakie
 
 outdir = "~/Projects/StructuralErrorPaper" |> expanduser
@@ -156,7 +156,7 @@ let
         )
         tip = specs.dns_fil
         o = (22, 70, 210)[i]
-        ax_zoom = StructuralClosure.zoombox!(
+        ax_zoom = ExactClosure.zoombox!(
             f[i, 1],
             ax;
             point = (tip.k[end-o], tip.e[end-o]),

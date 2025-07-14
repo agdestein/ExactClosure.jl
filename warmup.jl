@@ -1,6 +1,6 @@
 if false
-    include("src/StructuralClosure.jl")
-    using .StructuralClosure
+    include("src/ExactClosure.jl")
+    using .ExactClosure
 end
 
 # For logging to stderr without delay on SLURM
@@ -17,7 +17,7 @@ using CairoMakie
 using CUDA
 using JLD2
 using Random
-using StructuralClosure: NavierStokes
+using ExactClosure: NavierStokes
 using Turbulox
 using WGLMakie
 

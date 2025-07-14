@@ -1,7 +1,7 @@
 # This is just a hack for "go to definition" to work in editor.
 if false
-    include("src/StructuralClosure.jl")
-    using .StructuralClosure
+    include("src/ExactClosure.jl")
+    using .ExactClosure
 end
 
 @info "Loading packages"
@@ -10,7 +10,7 @@ flush(stderr)
 using Adapt
 using CairoMakie
 using JLD2
-using StructuralClosure: NavierStokes, zoombox!
+using ExactClosure: NavierStokes, zoombox!
 using Turbulox
 using WGLMakie
 

@@ -1,4 +1,4 @@
-name = "StructuralClosure"
+name = "ExactClosure"
 uuid = "72b019ed-8d6c-4174-99c0-d6632ea0e54c"
 authors = ["Syver Døving Agdestein <syverda@gmail.com>"]
 version = "1.0.0"

@@ -1,4 +1,4 @@
-module StructuralClosure
+module ExactClosure
 
 using Makie
 
