@@ -23,10 +23,11 @@ using WGLMakie
 
 @flushinfo "Loading case"
 
-case = NavierStokes.smallcase()
-case = NavierStokes.largecase()
-case = NavierStokes.newcase()
-case = NavierStokes.snelliuscase()
+# Choose case
+case = NavierStokes.smallcase() # Laptop CPU with 16 GB RAM
+case = NavierStokes.mediumcase() # GPU with 24 GB RAM
+case = NavierStokes.largecase() # GPU with 90 GB RAM (H100)
+
 (; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak) = case
 T = typeof(grid.L)
 case |> pairs
@@ -46,18 +47,18 @@ cache = (; ustart = VectorField(grid), du = VectorField(grid), p = ScalarField(g
 
 u = ustart
 
-doplot = false
+doplot = true
 if doplot
     ut_obs = NavierStokes.plotsol(u, cache.p, viscosity)
 end
 
-@flushinfo "Running burn-in"
+@flushinfo "Running DNS warm-up"
 
 # Burn-in
 let
     t = 0.0 |> T
     cfl = 0.85 |> T
-    tstop = 0.5 |> T
+    tstop = 0.2 |> T
     i = 0
     while t < tstop
         i += 1
@@ -85,7 +86,7 @@ file = joinpath(outdir, "u.jld2")
 @flushinfo "Saving final velocity field to $file"
 save_object(file, u.data |> Array)
 
-@flushinfo "Plotting solution"
-CairoMakie.activate!()
-ut_obs = NavierStokes.plotsol(u, cache.p, viscosity)
-save("plotsol.pdf", current_figure())
+# @flushinfo "Plotting solution"
+# CairoMakie.activate!()
+# ut_obs = NavierStokes.plotsol(u, cache.p, viscosity)
+# save("plotsol.pdf", current_figure())

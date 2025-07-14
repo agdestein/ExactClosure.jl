@@ -1,6 +1,6 @@
-# localhost:9384/browser-display
-
-# Run with julia -t auto to speed up simulations
+# DNS-aided LES for the Burgers equation
+#
+# Run with `julia -t auto` to run the simulations in parallel.
 
 if false
     include("src/StructuralClosure.jl")
@@ -33,7 +33,7 @@ setup = let
 end
 setup |> pairs
 
-# Show stepping
+# Plot Burgers solution
 let
     (; L, nh, kp, a, visc, tstop, seed) = setup
     g = Grid(L, nh)
@@ -48,19 +48,15 @@ let
         t += dt
     end
     xh = points_stag(g)
-    @show sum(abs2, ustart) / 2nh sum(abs2, uh) / 2nh
     fig = Figure(; size = (400, 340))
     ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u")
     lines!(ax, xh, ustart; label = "Initial")
     lines!(ax, xh, uh; label = "Final")
-    # lines!(ax, xH, uH)
-    # axislegend(ax; position = :lb)
     Legend(
         fig[0, 1],
         ax;
         tellwidth = false,
         orientation = :horizontal,
-        # nbanks = 2,
         framevisible = false,
     )
     rowgap!(fig.layout, 5)
@@ -68,6 +64,7 @@ let
     fig
 end
 
+# DNS-aided LES
 series = map(setup.nH) do nH
     @show nH
     (; L, nh, visc, kp, a, tstop, nsample, seed) = setup
@@ -78,9 +75,7 @@ series = map(setup.nH) do nH
         dns_fil = (; g = gH, u = zeros(nH, nsample), label = "Filtered DNS"),
         nomodel = (; g = gH, u = zeros(nH, nsample), label = "No model"),
         classic = (; g = gH, u = zeros(nH, nsample), label = "Classic"),
-        revolut = (; g = gH, u = zeros(nH, nsample), label = "Swap (ours)"),
-        # classic_conv = (; g = gH, u = zeros(nH, nsample), label = "Classic (conv)"),
-        # revolut_conv = (; g = gH, u = zeros(nH, nsample), label = "Filter-swap (conv)"),
+        swapfil = (; g = gH, u = zeros(nH, nsample), label = "Swap (ours)"),
     )
     Random.seed!(seed)
     Threads.@threads for i = 1:nsample
@@ -93,8 +88,9 @@ series = map(setup.nH) do nH
     (; nH, fields)
 end;
 
+# Compute relative errors
 errseries = let
-    fields = map([:nomodel, :classic, :revolut]) do key
+    fields = map([:nomodel, :classic, :swapfil]) do key
         e = map(series) do (; nH, fields)
             (; u) = fields[key]
             norm(u - fields.dns_fil.u) / norm(fields.dns_fil.u)
@@ -105,6 +101,7 @@ errseries = let
 end;
 errseries.fields |> pairs
 
+# Write errors to LaTeX table
 open("$outdir/tables/burgers_error.tex", "w") do io
     tab = "    "
     c = join(fill("r", length(errseries.fields) + 1), " ")
@@ -123,29 +120,7 @@ open("$outdir/tables/burgers_error.tex", "w") do io
     println(io, "% vim: conceallevel=0 textwidth=0")
 end
 
-let
-    fig = Figure(; size = (400, 300))
-    ax = Axis(
-        fig[1, 1];
-        xlabel = "Number of grid points",
-        xscale = log10,
-        yscale = log10,
-        xticks = errseries.nH,
-    )
-    for (; e, label) in errseries.fields
-        scatterlines!(
-            ax,
-            errseries.nH,
-            e;
-            label,
-            # marker = :circle,
-        )
-    end
-    axislegend(ax; position = :cc)
-    # save("$(plotdir)/burgers_error.pdf", fig; backend = CairoMakie)
-    fig
-end
-
+# Compute spectra
 specseries = map(series) do (; nH, fields)
     @show nH
     gh = Grid(setup.L, setup.nh)
@@ -161,7 +136,7 @@ specseries = map(series) do (; nH, fields)
     (; nH, specs)
 end;
 
-# Spectrum
+# Plot spectrum
 let
     fig = Figure(; size = (400, 800))
     f = fig[1, 1] = GridLayout()
@@ -172,15 +147,12 @@ let
         ax = Axis(
             f[i, 1];
             yscale = log10,
-            # xscale = log2,
             xscale = log10,
-            # xticks = ticks,
             xlabel = "Wavenumber",
             ylabel = "Energy",
             xticksvisible = islast,
             xticklabelsvisible = islast,
             xlabelvisible = islast,
-            # ylabel = "N = $nH",
         )
         tip = specs.dns_fil
         o = (22, 70, 210)[i]
@@ -198,34 +170,19 @@ let
             dns_fil = (; color = Cycled(1), linestyle = :dash),
             nomodel = (; color = Cycled(2)),
             classic = (; color = Cycled(3)),
-            revolut = (; color = Cycled(4)),
+            swapfil = (; color = Cycled(4)),
         )
         for key in [
             :dns_ref,
             :nomodel,
             :classic,
-            :revolut,
-            # :classic_conv,
-            # :revolut_conv,
+            :swapfil,
             :dns_fil,
         ]
             (; k, e, label) = specs[key]
             lines!(ax, k, e; label, styles[key]...)
             lines!(ax_zoom, k, e; styles[key]...)
-            # lines!(ax, k[1:(end-1)], specavg3(e)[1:(end-1)]; label)
-            # lines!(ax, k[1:end-2], specavg5(e)[1:end-2]; label)
         end
-        # theoretical = let
-        #     L = 2π
-        #     (; k, e) = specs.dns_ref
-        #     n = nH
-        #     G = @. sin(k * L / 2n) * 2n / k / L
-        #     Ge = @. G^2 * e
-        #     k, Ge
-        # end
-        # lines!(ax, theoretical...)
-        # lines!(ax, specs[1].k[29:300], k -> 1.5e0 * k^(-2); label = "k^-2")
-        # vlines!(ax, div(nH, 2); color = :black)
         Label(
             f[i, 1],
             "N = $nH";
@@ -252,6 +209,7 @@ let
     fig
 end
 
+# Compute dissipation coefficients
 diss = let
     (; visc) = setup
     map(series) do (; nH, fields)
@@ -264,21 +222,21 @@ diss = let
             vu = volavg_stag!(gH, gh, zeros(nH), uh)
             svu = map(i -> stress(gH, vu, visc, i), 1:gH.n)
             σ_classic = vsu - svu
-            σ_revolut = fsu - svu
+            σ_swapfil = fsu - svu
             d_classic = dissipation(gH, vu, σ_classic)
-            d_revolut = dissipation(gH, vu, σ_revolut)
-            hcat(d_classic, d_revolut)
+            d_swapfil = dissipation(gH, vu, σ_swapfil)
+            hcat(d_classic, d_swapfil)
         end
-        (; nomodel = zeros(1), classic = d[:, 1, :] |> vec, revolut = d[:, 2, :] |> vec)
+        (; nomodel = zeros(1), classic = d[:, 1, :] |> vec, swapfil = d[:, 2, :] |> vec)
     end
 end;
 
-# Multiple trajectories
+# Plot dissipation coefficient density
 let
     models = [
         (; label = "No-model", sym = :nomodel),
         (; label = "Classic", sym = :classic),
-        (; label = "Swap (ours)", sym = :revolut),
+        (; label = "Swap (ours)", sym = :swapfil),
     ]
     fig = Figure(; size = (400, 800))
     for (i, diss) in diss |> enumerate
@@ -303,9 +261,8 @@ let
             )
         end
         Label(
-            fig[i, 1], #, TopLeft()],
+            fig[i, 1],
             "N = $(setup.nH[i])";
-            # fontsize = 26,
             font = :bold,
             padding = (10, 0, 0, 10),
             halign = :left,

@@ -11,92 +11,60 @@ using StaticArrays
 
 get_backend() = CUDA.functional() ? CUDABackend() : CPU()
 
-"Prototype test case."
-function smallcase()
-    seed = 123
-    # T = Float32
-    T = Float64
-    grid = Grid(; ho = Val(1), L = T(1), n = 150, backend = get_backend())
-    viscosity = 0.3e-4 |> T
-    outdir = joinpath(@__DIR__, "..", "output", "smallcase") |> mkpath
+"Test case."
+function getcase(;
+    outdir,
+    viscosity,
+    n_dns,
+    seed = 123,
+    T = Float64,
+    L = T(1),
+    backend = get_backend(),
+    kpeak = 5,
+    compression = [5, 3],
+    totalenergy = T(1 / 2),
+)
+    outdir |> mkpath
     datadir = joinpath(outdir, "data") |> mkpath
     plotdir = joinpath(outdir, "plots") |> mkpath
-    amplitude = T(1)
-    kpeak = 5
-    (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak)
-end
-
-"Large test case."
-function largecase()
-    seed = 123
-    # T = Float32
-    T = Float64
-    grid = Grid(; L = T(1), n = 510, backend = get_backend())
-    viscosity = 1 / 40_000 |> T
-    outdir = joinpath(@__DIR__, "..", "output", "largecase") |> mkpath
-    datadir = joinpath(outdir, "data") |> mkpath
-    plotdir = joinpath(outdir, "plots") |> mkpath
-    totalenergy = T(1 / 2)
-    kpeak = 5
-    n_les, compression = [102, 170], [5, 3]
-    @assert all(==(grid.n), n_les .* compression)
+    g_dns = Grid(; L, n = n_dns, backend)
+    n_les = div.(g_dns.n, compression)
+    g_les = map(n -> Grid(; L, n, backend), n_les)
+    @assert all(==(g_dns.n), n_les .* compression)
     (;
-        seed,
-        grid,
-        viscosity,
         outdir,
         datadir,
         plotdir,
-        totalenergy,
-        kpeak,
-        n_les,
-        compression,
-    )
-end
-
-"New test case."
-function newcase()
-    seed = 123
-    # T = Float32
-    T = Float64
-    grid = Grid(; L = T(1), n = 810, backend = get_backend())
-    viscosity = 1 / 40_000 |> T
-    # outdir = joinpath(@__DIR__, "..", "output", "newcase") |> mkpath
-    outdir = joinpath(ENV["DEEPDIP"], "ExactClosure", "newcase") |> mkpath
-    datadir = joinpath(outdir, "data") |> mkpath
-    plotdir = joinpath(outdir, "plots") |> mkpath
-    totalenergy = T(1 / 2)
-    kpeak = 5
-    n_les, compression = [162, 270], [5, 3]
-    @assert all(==(grid.n), n_les .* compression)
-    (;
         seed,
-        grid,
-        viscosity,
-        outdir,
-        datadir,
-        plotdir,
         totalenergy,
         kpeak,
-        n_les,
-        compression,
+        viscosity,
+        g_dns,
+        g_les,
     )
 end
 
-"Large test case."
-function snelliuscase()
-    seed = 123
-    # T = Float32
-    T = Float64
-    grid = Grid(; ho = Val(1), L = T(1), n = 800, backend = get_backend())
-    viscosity = 1 / 10_000 |> T
-    outdir = joinpath(ENV["DEEPDIP"], "ExactClosure", "snelliuscase") |> mkpath
-    datadir = joinpath(outdir, "data") |> mkpath
-    plotdir = joinpath(outdir, "plots") |> mkpath
-    amplitude = T(5e-2)
-    kpeak = 5
-    (; seed, grid, viscosity, outdir, datadir, plotdir, amplitude, kpeak)
-end
+"Prototype test case. Can be run on a laptop."
+smallcase() = getcase(;
+    viscosity = 5e-4,
+    n_dns = 90,
+    outdir = joinpath(@__DIR__, "..", "output", "smallcase"),
+)
+
+"Medium size test case. Can be run on 24 GB GPU."
+mediumcase() = getcase(;
+    viscosity = 5e-5,
+    n_dns = 510,
+    outdir = joinpath(@__DIR__, "..", "output", "mediumcase"),
+)
+
+"Large test case (used in paper). Requires a 90 GB GPU (H100)."
+largecase() = getcase(;
+    viscosity = 2.5e-5,
+    n_dns = 810,
+    # outdir = joinpath(ENV["DEEPDIP"], "ExactClosure", "largecase"),
+    outdir = joinpath(@__DIR__, "..", "output", "largecase"),
+)
 
 "Vorticity in the plane `Iz`."
 @kernel function vorticity!(ω, u, Iz)
@@ -130,9 +98,8 @@ function plotsol(u, p, viscosity; colorrange = (-50, 50))
         spec = spectrum(u; stuff)
         spec_obs[] = Point2.(spec.k, spec.s)
         xslope = spec.k[10:end]
-        C_K = 1.58 |> T
-        τ = 2π |> T
-        yslope = @. C_K * D^T(2 / 3) * (τ * xslope)^T(-5 / 3)
+        C_K = 0.6 |> T
+        yslope = @. C_K * D^T(2 / 3) * (xslope)^T(-5 / 3)
         slope_obs[] = Point2.(xslope, yslope)
     end
     ut_obs[] = (; u, t = T(0))
@@ -175,57 +142,6 @@ tensordot(a, b) =
     mapreduce(+, a, b) do a, b
         dot(a, b)
     end
-
-function cross_correlation(a, b)
-    amean = sum(a) / length(a)
-    bmean = sum(b) / length(b)
-    adev = map(a -> a - amean, a)
-    bdev = map(b -> b - bmean, b)
-    tensordot(adev, bdev) / sqrt(tensordot(adev, adev) * tensordot(bdev, bdev))
-end
-
-"""
-Flatten "n-vector of tensors" to 9-times-n array.
-"""
-@kernel function tensorextract!(grid, τ_flat, τ)
-    i, x = @index(Global, NTuple)
-    tensor = τ[i, x]
-    τ_flat[i, 1, x] = tensor[1, 1]
-    τ_flat[i, 2, x] = tensor[2, 1]
-    τ_flat[i, 3, x] = tensor[3, 1]
-    τ_flat[i, 4, x] = tensor[1, 2]
-    τ_flat[i, 5, x] = tensor[2, 2]
-    τ_flat[i, 6, x] = tensor[3, 2]
-    τ_flat[i, 7, x] = tensor[1, 3]
-    τ_flat[i, 8, x] = tensor[2, 3]
-    τ_flat[i, 9, x] = tensor[3, 3]
-end
-
-"""
-Convert 9-times-n array to "n-vector of tensors".
-"""
-@kernel function tensorback!(grid, τ, τ_flat)
-    x = @index(Global, Linear)
-    τ[x] = SMatrix{3,3,T,9}(
-        τ_flat[1, x],
-        τ_flat[2, x],
-        τ_flat[3, x],
-        τ_flat[4, x],
-        τ_flat[5, x],
-        τ_flat[6, x],
-        τ_flat[7, x],
-        τ_flat[8, x],
-        τ_flat[9, x],
-    )
-end
-
-"Load JLD2 file as named tuple (instead of dict)."
-function namedtupleload(file)
-    dict = load(file)
-    k, v = keys(dict), values(dict)
-    pairs = @. Symbol(k) => v
-    (; pairs...)
-end
 
 function fe_step!(du, u, cache, Δt, poisson)
     (; p) = cache
