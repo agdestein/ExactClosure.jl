@@ -1,10 +1,6 @@
 # ExactClosure
 
-[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://agdestein.github.io/ExactClosure.jl/stable/)
-[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://agdestein.github.io/ExactClosure.jl/dev/)
-[![Build Status](https://github.com/agdestein/ExactClosure.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/agdestein/ExactClosure.jl/actions/workflows/CI.yml?query=branch%3Amain)
-[![Coverage](https://codecov.io/gh/agdestein/ExactClosure.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/agdestein/ExactClosure.jl)
-[![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+Source code for the paper "Exact closure for discrete LES".
 
 ## Setup
 
@@ -22,6 +18,8 @@ julia --project -t auto burgers.jl
 
 ## Navier-Stokes
 
-First generate initial conditions by running `burnin.jl`.
+Generate initial conditions by running `warmup.jl`.
 
-Then run DNS-aided LES with `dns_aid.jl`.
+Run DNS-aided LES with `dns_aid.jl`.
+
+Run `plots.jl` to generate plots.
