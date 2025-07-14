@@ -78,6 +78,27 @@ false && let
     end
 end
 
+@info "Computing DNS spectrum after warm-up"
+let
+    path = joinpath(outdir, "u.jld2")
+    data = path |> load_object |> adapt(g_dns.backend)
+    u = VectorField(g_dns, data)
+    dns = spectrum(u)
+    les = map(g_les) do g_les
+        compression = div(g_dns.n, g_les.n)
+        v = VectorField(g_les)
+        Turbulox.volumefilter!(v, u, compression)
+        spectrum(v)
+    end
+    # Dissipation coefficient
+    diss = ScalarField(g_dns)
+    apply!(Turbulox.dissipation!, g_dns, diss, u, viscosity)
+    D = sum(diss.data) / length(diss)
+    diss = nothing # free up memory
+    jldsave(joinpath(datadir, "warm-up-spectra.jld2"); dns, les, D)
+end
+
+
 let
     @info "Computing dissipation coefficient density"
     flush(stderr)

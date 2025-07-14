@@ -22,7 +22,7 @@ case = NavierStokes.smallcase() # Laptop CPU with 16 GB RAM
 case = NavierStokes.mediumcase() # GPU with 24 GB RAM
 case = NavierStokes.largecase() # GPU with 90 GB RAM (H100)
 
-(; grid, outdir, datadir, plotdir, g_dns, g_les) = case
+(; outdir, datadir, plotdir, g_dns, g_les) = case
 
 # Plot DNS and filtered DNS in zoom-in region
 let
@@ -53,12 +53,12 @@ let
         u.data[(end-A+1):end, (end-A+1):end, end, i] |> Array;
         imkwargs...,
     )
-    for (j, ubar) in enumerate(ubar)
-        compression = div(g_dns.n, ubar.grid.n)
+    for (j, v) in enumerate(ubar)
+        compression = div(g_dns.n, v.grid.n)
         a = div(A, compression)
         image!(
             Axis(fig[1, 1+(length(ubar)+1-j)]; kwargs...),
-            ubar.data[(end-a+1):end, (end-a+1):end, end, i] |> Array;
+            v.data[(end-a+1):end, (end-a+1):end, end, i] |> Array;
             imkwargs...,
         )
     end
@@ -68,7 +68,7 @@ let
     fig
 end
 
-# Relative errors
+# Plot relative errors from DNS-aided LES
 let
     fig = Figure(; size = (900, 400))
     experiments = ["volavg", "project_volavg", "surfavg"]
@@ -140,16 +140,58 @@ end
 #     end
 # end
 
-# Plot spectrum
+# Plot DNS spectrum after warm-up
+let
+    spec_dns, spec_les, D = load(joinpath(datadir, "warm-up-spectra.jld2"), "dns", "les", "D")
+    # Kolmogorov slope
+    xslope = spec_dns.k[[8, end-20]]
+    CK = 0.5
+    yslope = @. CK * D^(2 / 3) * (xslope)^(-5 / 3)
+    kolmogo = (; k = xslope, s = yslope)
+    fig = Figure(; size = (400, 360))
+    ax = Makie.Axis(
+        fig[1, 1];
+        xscale = log10,
+        yscale = log10,
+        xlabel = "Wavenumber",
+        ylabel = "Energy",
+    )
+    colors = [Makie.wong_colors()[1:4]; "#202020"; "#606060"]
+    series = [
+        (spec_dns, "DNS (N = $(g_dns.n))", colors[1], :solid),
+        (spec_les[1], "Filtered DNS (N = $(g_les[1].n))", colors[2], :solid),
+        (kolmogo, "Kolmogorov", colors[4], :dash),
+        (spec_les[2], "Filtered DNS (N = $(g_les[2].n))", colors[3], :solid),
+    ]
+    for (s, label, color, linestyle) in series
+        lines!(ax, Point2f.(s.k, s.s); color, linestyle, label)
+    end
+    Legend(
+        fig[0, 1], ax;
+        tellwidth = false,
+        tellheight = true,
+        framevisible = false,
+        horizontal = true,
+        nbanks = 2,
+    )
+    file = joinpath(plotdir, "ns-spectrum-warmup.pdf")
+    @info "Saving spectrum plot to $file"
+    flush(stderr)
+    save(file, fig; backend = CairoMakie)
+    fig
+end
+
+# Plot DNS-aided LES spectra
 let
     fig = Figure(; size = (900, 400))
+    # fig = Figure(; size = (1200, 600))
     experiments = ["volavg", "project_volavg", "surfavg"]
     for (i, g_les) in enumerate(g_les), (j, ex) in enumerate(experiments)
         ilast = i == 2
         jfirst = j == 1
         specs, D =
             load(joinpath(datadir, "spectra-$(ex)-$(g_les.n).jld2"), "specs", "D")
-        xslope = specs.dns_ref.k[8:(end-12)]
+        xslope = specs.dns_ref.k[[8, end-40]]
         CK = 0.5
         yslope = @. CK * D^(2 / 3) * (xslope)^(-5 / 3)
         specs = (; specs..., kolmogo = (; k = xslope, s = yslope))
@@ -159,6 +201,7 @@ let
             yscale = log10,
             xlabel = "Wavenumber",
             ylabel = "Energy",
+            xticks = [1, 10, 100],
             xticksvisible = ilast,
             xticklabelsvisible = ilast,
             xlabelvisible = ilast,
@@ -166,25 +209,38 @@ let
             yticklabelsvisible = jfirst,
             ylabelvisible = jfirst,
         )
-        o = 10
+        xlims!(ax_full, 0.8, 1.6e2)
+        # ylims!(ax_full, 1.5e-5, 1e-2)
+        o = 35
         ax_zoom = zoombox!(
             fig[i, j],
             ax_full;
             point = (specs.dns_fil.k[end-o], specs.dns_fil.s[end-o]),
-            logx = 1.3,
-            logy = 2.2,
+            logx = 1.15,
+            logy = 1.3,
             relwidth = 0.5,
-            relheight = 0.65,
+            relheight = 0.55,
         )
-        for (key, label, color, linestyle) in [
-            (:nomodel, "No-model", Cycled(2), :solid),
-            (:classic, "Classic", Cycled(3), :solid),
-            (:swapfil, "Swap", Cycled(4), :solid),
-            (:swapfil_symm, "Swap-sym", Cycled(5), :solid),
-            (:dns_ref, "DNS", Cycled(1), :solid),
-            (:dns_fil, "Filtered DNS", Cycled(1), :dash),
-            (:kolmogo, "Kolmogorov", Cycled(1), :dot),
+        colors = [Makie.wong_colors()[1:4]; "#202020"; "#606060"]
+        # series = [
+        #     (:dns_ref, "DNS", colors[1], :solid),
+        #     (:nomodel, "No-model", colors[2], :solid),
+        #     (:classic, "Classic", colors[3], :solid),
+        #     (:swapfil, "Swap", colors[4], :solid),
+        #     (:swapfil_symm, "Swap-sym", colors[5], :solid),
+        #     (:dns_fil, "Filtered DNS", colors[1], :dash),
+        #     (:kolmogo, "Kolmogorov", colors[1], :dot),
+        # ]
+        series = [
+            (:nomodel, "No-model", colors[1], :solid),
+            (:classic, "Classic", colors[2], :solid),
+            (:swapfil_symm, "Swap-sym", colors[3], :solid),
+            (:swapfil, "Swap", colors[4], :solid),
+            (:dns_fil, "Filtered DNS", colors[5], :dash),
+            # (:dns_ref, "DNS", colors[6], :solid),
+            (:kolmogo, "Kolmogorov", colors[6], :dot),
         ]
+        for (key, label, color, linestyle) in series
             spec = specs[key]
             lines!(ax_full, Point2f.(spec.k, spec.s); color, linestyle, label)
             lines!(ax_zoom, Point2f.(spec.k, spec.s); color, linestyle)
