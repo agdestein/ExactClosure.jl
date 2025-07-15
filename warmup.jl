@@ -58,7 +58,7 @@ end
 let
     t = 0.0 |> T
     cfl = 0.85 |> T
-    tstop = 0.4 |> T
+    tstop = 0.5 |> T
     i = 0
     while t < tstop
         i += 1
