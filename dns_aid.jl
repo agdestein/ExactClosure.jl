@@ -113,7 +113,7 @@ open(joinpath(outdir, "ns_error.tex"), "w") do io
         relerr = load(joinpath(datadir, "relerr-$(ex)-$(g_les.n).jld2"), "relerr")
         r = map(x -> round(x[end]; sigdigits = 3), relerr)
         println(
-        io,
+            io,
             join(
                 [
                     Dict("volavg" => "VA ", "project_volavg" => "PVA", "surfavg" => "SA ")[ex],

@@ -142,7 +142,8 @@ end
 
 # Plot DNS spectrum after warm-up
 let
-    spec_dns, spec_les, D = load(joinpath(datadir, "warm-up-spectra.jld2"), "dns", "les", "D")
+    spec_dns, spec_les, D =
+        load(joinpath(datadir, "warm-up-spectra.jld2"), "dns", "les", "D")
     # Kolmogorov slope
     xslope = spec_dns.k[[8, end-20]]
     CK = 0.5
@@ -167,7 +168,8 @@ let
         lines!(ax, Point2f.(s.k, s.s); color, linestyle, label)
     end
     Legend(
-        fig[0, 1], ax;
+        fig[0, 1],
+        ax;
         tellwidth = false,
         tellheight = true,
         framevisible = false,
@@ -190,8 +192,7 @@ let
     for (i, g_les) in enumerate(g_les), (j, ex) in enumerate(experiments)
         ilast = i == 2
         jfirst = j == 1
-        specs, D =
-            load(joinpath(datadir, "spectra-$(ex)-$(g_les.n).jld2"), "specs", "D")
+        specs, D = load(joinpath(datadir, "spectra-$(ex)-$(g_les.n).jld2"), "specs", "D")
         xslope = specs.dns_ref.k[[8, end-40]]
         CK = 0.5
         yslope = @. CK * D^(2 / 3) * (xslope)^(-5 / 3)

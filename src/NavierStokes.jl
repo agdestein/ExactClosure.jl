@@ -31,17 +31,7 @@ function testcase(;
     n_les = div.(g_dns.n, compression)
     g_les = map(n -> Grid(; L, n, backend), n_les)
     @assert all(==(g_dns.n), n_les .* compression)
-    (;
-        outdir,
-        datadir,
-        plotdir,
-        seed,
-        totalenergy,
-        kpeak,
-        viscosity,
-        g_dns,
-        g_les,
-    )
+    (; outdir, datadir, plotdir, seed, totalenergy, kpeak, viscosity, g_dns, g_les)
 end
 
 "Prototype test case. Can be run on a laptop."

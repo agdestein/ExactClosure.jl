@@ -180,13 +180,7 @@ let
             classic = (; color = Cycled(3)),
             swapfil = (; color = Cycled(4)),
         )
-        for key in [
-            :dns_ref,
-            :nomodel,
-            :classic,
-            :swapfil,
-            :dns_fil,
-        ]
+        for key in [:dns_ref, :nomodel, :classic, :swapfil, :dns_fil]
             (; k, e, label) = specs[key]
             lines!(ax, k, e; label, styles[key]...)
             lines!(ax_zoom, k, e; styles[key]...)
