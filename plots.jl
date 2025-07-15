@@ -148,7 +148,7 @@ let
     CK = 0.5
     yslope = @. CK * D^(2 / 3) * (xslope)^(-5 / 3)
     kolmogo = (; k = xslope, s = yslope)
-    fig = Figure(; size = (400, 360))
+    fig = Figure(; size = (400, 350))
     ax = Makie.Axis(
         fig[1, 1];
         xscale = log10,
@@ -174,6 +174,7 @@ let
         horizontal = true,
         nbanks = 2,
     )
+    rowgap!(fig.layout, 5)
     file = joinpath(plotdir, "ns-spectrum-warmup.pdf")
     @info "Saving spectrum plot to $file"
     flush(stderr)

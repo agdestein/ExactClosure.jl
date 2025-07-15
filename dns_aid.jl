@@ -1,3 +1,4 @@
+# This is just a hack for "go to definition" to work in editor.
 if false
     include("src/ExactClosure.jl")
     using .ExactClosure
@@ -128,6 +129,7 @@ open(joinpath(outdir, "ns_error.tex"), "w") do io
         )
     end
 end
+open(readlines, joinpath(outdir, "ns_error.tex")) .|> println;
 
 @info "Done."
 flush(stderr)

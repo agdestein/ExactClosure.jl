@@ -2,6 +2,7 @@
 #
 # Run with `julia -t auto` to run the simulations in parallel.
 
+# This is just a hack for "go to definition" to work in editor.
 if false
     include("src/ExactClosure.jl")
     using .ExactClosure
@@ -15,8 +16,9 @@ using ExactClosure
 using ExactClosure.Burgers
 using WGLMakie
 
-outdir = "~/Projects/StructuralErrorPaper" |> expanduser
-plotdir = "$outdir/figures"
+# outdir = "~/Projects/StructuralErrorPaper" |> expanduser
+outdir = joinpath(@__DIR__, "output", "Burgers") |> mkpath
+plotdir = "$outdir/figures" |> mkpath
 
 setup = let
     L = 2π
@@ -102,22 +104,28 @@ end;
 errseries.fields |> pairs
 
 # Write errors to LaTeX table
-open("$outdir/tables/burgers_error.tex", "w") do io
-    tab = "    "
-    c = join(fill("r", length(errseries.fields) + 1), " ")
-    println(io, "\\begin{tabular}{$c}")
-    println(io, tab, "\\toprule")
-    labels = join(map(f -> f.label, errseries.fields), " & ")
-    println(io, tab, "N & $labels \\\\")
-    println(io, tab, "\\midrule")
-    for i in eachindex(errseries.nH)
-        e = map(f -> round(f.e[i]; sigdigits = 3), errseries.fields)
-        println(io, tab, errseries.nH[i], " & ", join(e, " & "), " \\\\")
+let
+    path = joinpath(outdir, "tables") |> mkpath
+    file = joinpath(path, "burgers_error.tex")
+    open(file, "w") do io
+        tab = "    "
+        c = join(fill("r", length(errseries.fields) + 1), " ")
+        println(io, "\\begin{tabular}{$c}")
+        println(io, tab, "\\toprule")
+        labels = join(map(f -> f.label, errseries.fields), " & ")
+        println(io, tab, "N & $labels \\\\")
+        println(io, tab, "\\midrule")
+        for i in eachindex(errseries.nH)
+            e = map(f -> round(f.e[i]; sigdigits = 3), errseries.fields)
+            println(io, tab, errseries.nH[i], " & ", join(e, " & "), " \\\\")
+        end
+        println(io, tab, "\\bottomrule")
+        println(io, "\\end{tabular}")
+        println(io)
+        println(io, "% vim: conceallevel=0 textwidth=0")
     end
-    println(io, tab, "\\bottomrule")
-    println(io, "\\end{tabular}")
-    println(io)
-    println(io, "% vim: conceallevel=0 textwidth=0")
+    open(readlines, file) .|> println
+    nothing
 end
 
 # Compute spectra
@@ -136,7 +144,7 @@ specseries = map(series) do (; nH, fields)
     (; nH, specs)
 end;
 
-# Plot spectrum
+# Plot spectra
 let
     fig = Figure(; size = (400, 800))
     f = fig[1, 1] = GridLayout()

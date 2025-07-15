@@ -94,10 +94,8 @@ let
     diss = ScalarField(g_dns)
     apply!(Turbulox.dissipation!, g_dns, diss, u, viscosity)
     D = sum(diss.data) / length(diss)
-    diss = nothing # free up memory
     jldsave(joinpath(datadir, "warm-up-spectra.jld2"); dns, les, D)
 end
-
 
 let
     @info "Computing dissipation coefficient density"

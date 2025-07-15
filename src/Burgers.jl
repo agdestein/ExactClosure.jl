@@ -117,9 +117,9 @@ function dns_aided_les(ustart, gh, gH, visc; tstop, cfl_factor)
         dns_fil = copy(uH),
         nomodel = copy(uH),
         classic = copy(uH),
-        revolut = copy(uH),
+        swapfil = copy(uH),
         classic_conv = copy(uH),
-        revolut_conv = copy(uH),
+        swapfil_conv = copy(uH),
     )
     su = zeros(gh.n)
     cu = zeros(gh.n)
@@ -132,9 +132,9 @@ function dns_aided_les(ustart, gh, gH, visc; tstop, cfl_factor)
     cvu = zeros(gH.n)
     σ_nomodel = zeros(gH.n)
     σ_classic = zeros(gH.n)
-    σ_revolut = zeros(gH.n)
+    σ_swapfil = zeros(gH.n)
     σ_classic_conv = zeros(gH.n)
-    σ_revolut_conv = zeros(gH.n)
+    σ_swapfil_conv = zeros(gH.n)
     t = 0.0
     while t < tstop
         dt = cfl_factor * cfl(gh, u.dns_ref, visc)
@@ -153,9 +153,9 @@ function dns_aided_les(ustart, gh, gH, visc; tstop, cfl_factor)
             cvu = convstress(gH, vu, visc, i)
             σ_nomodel[i] = stress(gH, u.nomodel, visc, i)
             σ_classic[i] = stress(gH, u.classic, visc, i) + vsu[i] - svu
-            σ_revolut[i] = stress(gH, u.revolut, visc, i) + fsu[i] - svu
+            σ_swapfil[i] = stress(gH, u.swapfil, visc, i) + fsu[i] - svu
             σ_classic_conv[i] = stress(gH, u.classic_conv, visc, i) + vcu[i] - cvu
-            σ_revolut_conv[i] = stress(gH, u.revolut_conv, visc, i) + fcu[i] - cvu
+            σ_swapfil_conv[i] = stress(gH, u.swapfil_conv, visc, i) + fcu[i] - cvu
         end
         for i = 1:gh.n
             u.dns_ref[i] += dt * δ_coll(gh, su, i)
@@ -163,9 +163,9 @@ function dns_aided_les(ustart, gh, gH, visc; tstop, cfl_factor)
         for i = 1:gH.n
             u.nomodel[i] += dt * δ_coll(gH, σ_nomodel, i)
             u.classic[i] += dt * δ_coll(gH, σ_classic, i)
-            u.revolut[i] += dt * δ_coll(gH, σ_revolut, i)
+            u.swapfil[i] += dt * δ_coll(gH, σ_swapfil, i)
             u.classic_conv[i] += dt * δ_coll(gH, σ_classic_conv, i)
-            u.revolut_conv[i] += dt * δ_coll(gH, σ_revolut_conv, i)
+            u.swapfil_conv[i] += dt * δ_coll(gH, σ_swapfil_conv, i)
         end
         t += dt
     end
