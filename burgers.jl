@@ -9,11 +9,13 @@ if false
 end
 
 using CairoMakie
-using FFTW
-using LinearAlgebra
-using Random
 using ExactClosure
 using ExactClosure.Burgers
+using FFTW
+using KernelDensity
+using LinearAlgebra
+using Random
+using Statistics
 using WGLMakie
 
 # outdir = "~/Projects/StructuralErrorPaper" |> expanduser
@@ -274,5 +276,66 @@ let
         )
     end
     save("$(plotdir)/burgers_dissipation.pdf", fig; backend = CairoMakie)
+    fig
+end
+
+# Plot dissipation coefficient density
+let
+    models = [
+        (; label = "No-model", sym = :nomodel),
+        (; label = "Classic", sym = :classic),
+        (; label = "Swap (ours)", sym = :swapfil),
+    ]
+    fig = Figure(; size = (400, 800))
+    for (i, diss) in diss |> enumerate
+        n = setup.nH[i]
+        g = Grid(setup.L, n)
+        a = 2.8e2
+        ax = Axis(
+            fig[i, 1];
+            xlabelvisible = i == 3,
+            xticksvisible = i == 3,
+            xticklabelsvisible = i == 3,
+            xlabel = "Dissipation",
+            ylabel = "Density",
+            yscale = log10,
+        )
+        xlims!(ax, -0.4 *  a, 0.3 * a)
+        ylims!(ax, 1e-4, 2.5e-1)
+        for (j, model) in enumerate(models)
+            d = diss[model.sym] / Burgers.h(g)^2
+            s = median(d)
+            if model.sym == :nomodel
+                lines!(ax, [Point2(s, 1e-5), Point2(s, 1e0)]; color = Cycled(j + 1), model.label)
+            else
+                # lines!(ax, [Point2(s, 1e-5), Point2(s, 1e0)]; color = Cycled(j + 1), linestyle = :dash)
+                k = kde(d; boundary = (-a, a))
+                lines!(ax, k.x, k.density;
+                model.label,
+                color = Cycled(j + 1))
+            end
+        end
+        Label(
+            fig[i, 1],
+            "N = $(setup.nH[i])";
+            font = :bold,
+            padding = (10, 0, 0, 10),
+            halign = :left,
+            valign = :top,
+            tellwidth = false,
+            tellheight = false,
+        )
+        i == 1 && Legend(
+            fig[0, 1],
+            ax;
+            tellwidth = false,
+            orientation = :horizontal,
+            framevisible = false,
+        )
+    end
+    # rowgap!(fig.layout, 10)
+    file = "$(plotdir)/burgers_dissipation.pdf"
+    @info "Saving dissipation plot to $file"
+    save(file, fig; backend = CairoMakie)
     fig
 end
