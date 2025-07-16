@@ -321,3 +321,33 @@ let
     save(file, fig; backend = CairoMakie)
     fig
 end
+
+@info "Writing errors to LaTeX table"
+flush(stderr)
+open(joinpath(outdir, "ns_error.tex"), "w") do io
+    println(io, "Filter & \$N_H\$ & No-model & Classic & Swap-sym & Swap \\\\")
+    experiments = ["volavg", "project_volavg", "surfavg"]
+    for g_les in g_les, ex in experiments
+        relerr = load(joinpath(datadir, "relerr-$(ex)-$(g_les.n).jld2"), "relerr")
+        r = map(x -> round(x[end]; sigdigits = 3), relerr)
+        println(
+            io,
+            join(
+                [
+                    Dict("volavg" => "VA ", "project_volavg" => "PVA", "surfavg" => "SA ")[ex],
+                    string(g_les.n),
+                    r.nomodel,
+                    r.classic,
+                    r.swapfil_symm,
+                    r.swapfil,
+                ],
+                " & ",
+            )...,
+            " \\\\",
+        )
+    end
+end
+open(readlines, joinpath(outdir, "ns_error.tex")) .|> println;
+
+@info "Done."
+flush(stderr)

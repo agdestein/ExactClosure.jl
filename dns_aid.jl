@@ -30,9 +30,9 @@ let
     cfl = 0.15 |> T
     tstop = 0.1 |> T
     poisson_dns = poissonsolver(g_dns)
-    for (j, g_les) in enumerate(g_les),
-        (i, ex) in enumerate(["volavg", "project_volavg", "surfavg"])
-        # parse(Int, ENV["SLURM_ARRAY_TASK_ID"]) == i + 3 * (j - 1) || continue
+    experiments = ["volavg", "project_volavg", "surfavg"]
+    for (j, g_les) in enumerate(g_les), (i, ex) in enumerate(experiments)
+        parse(Int, ENV["SLURM_ARRAY_TASK_ID"]) == i + 3 * (j - 1) || continue
         @info "Running experiment: $(ex)"
         flush(stderr)
         compression = div(g_dns.n, g_les.n)
@@ -105,31 +105,6 @@ let
         sols = nothing # free up memory
     end
 end
-
-open(joinpath(outdir, "ns_error.tex"), "w") do io
-    println(io, "Filter & \$N_H\$ & No-model & Classic & Swap-sym & Swap \\\\")
-    experiments = ["volavg", "project_volavg", "surfavg"]
-    for g_les in g_les, ex in experiments
-        relerr = load(joinpath(datadir, "relerr-$(ex)-$(g_les.n).jld2"), "relerr")
-        r = map(x -> round(x[end]; sigdigits = 3), relerr)
-        println(
-            io,
-            join(
-                [
-                    Dict("volavg" => "VA ", "project_volavg" => "PVA", "surfavg" => "SA ")[ex],
-                    string(g_les.n),
-                    r.nomodel,
-                    r.classic,
-                    r.swapfil_symm,
-                    r.swapfil,
-                ],
-                " & ",
-            )...,
-            " \\\\",
-        )
-    end
-end
-open(readlines, joinpath(outdir, "ns_error.tex")) .|> println;
 
 @info "Done."
 flush(stderr)
