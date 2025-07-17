@@ -28,7 +28,8 @@ case = NavierStokes.smallcase() # Laptop CPU with 16 GB RAM
 case = NavierStokes.mediumcase() # GPU with 24 GB RAM
 case = NavierStokes.largecase() # GPU with 90 GB RAM (H100)
 
-(; seed, grid, viscosity, outdir, datadir, plotdir, totalenergy, kpeak) = case
+(; seed, viscosity, outdir, datadir, plotdir, totalenergy, kpeak) = case
+grid = case.g_dns
 T = typeof(grid.L)
 case |> pairs
 
