@@ -35,33 +35,50 @@ let
         Turbulox.volumefilter!(v, u, compression)
         v
     end
-    fig = Figure(; size = (860, 300))
+    fig = Figure(; size = (700, 270))
     kwargs = (;
-        xlabelvisible = false,
+        # xlabelvisible = false,
         ylabelvisible = false,
-        xticksvisible = false,
+        # xticksvisible = false,
         yticksvisible = false,
-        xticklabelsvisible = false,
+        # xticklabelsvisible = false,
         yticklabelsvisible = false,
+        # xlabel = "x",
+        # ylabel = "y",
         aspect = DataAspect(),
     )
     A = 90
     imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
     i = 1
+    r = g_dns.n-A:g_dns.n
+    bounds = g_dns.L/g_dns.n * (g_dns.n - A), g_dns.L
     image!(
-        Axis(fig[1, 1]; kwargs...),
-        u.data[(end-A+1):end, (end-A+1):end, end, i] |> Array;
+        Axis(
+            fig[1, 1];
+            kwargs...,
+            ylabelvisible = true,
+            yticksvisible = true,
+            yticklabelsvisible = true,
+        ),
+        bounds,
+        bounds,
+        u.data[r, r, end, i] |> Array;
         imkwargs...,
     )
     for (j, v) in enumerate(ubar)
         compression = div(g_dns.n, v.grid.n)
         a = div(A, compression)
+        r = v.grid.n-a:v.grid.n
+        bounds = v.grid.L/v.grid.n * (v.grid.n - a), v.grid.L
         image!(
             Axis(fig[1, 1+(length(ubar)+1-j)]; kwargs...),
-            v.data[(end-a+1):end, (end-a+1):end, end, i] |> Array;
+            bounds,
+            bounds,
+            v.data[r, r, end, i] |> Array;
             imkwargs...,
         )
     end
+    colgap!(fig.layout, 5)
     file = joinpath(plotdir, "ns-fields-zoom.png")
     @info "Saving fields plot to $file"
     save(file, fig; backend = CairoMakie)
