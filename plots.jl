@@ -78,8 +78,8 @@ let
             imkwargs...,
         )
     end
-    colgap!(fig.layout, 5)
-    file = joinpath(plotdir, "ns-fields-zoom.png")
+    colgap!(fig.layout, 10)
+    file = joinpath(plotdir, "ns-fields-zoom.pdf")
     @info "Saving fields plot to $file"
     save(file, fig; backend = CairoMakie)
     fig
