@@ -7,7 +7,7 @@ Source code for the paper "Exact closure for discrete large-eddy simulation".
 Run
 
 ```
-julia --project -e 'using Pkg; Pkg.develop(; url = "https://github.com/agdestein/Turbulox.jl")
+julia --project -e 'using Pkg; Pkg.instantiate()'
 ```
 
 to install all dependencies.

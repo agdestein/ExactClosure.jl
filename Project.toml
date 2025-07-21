@@ -22,6 +22,9 @@ Turbulox = "25c03aae-1219-43c4-862d-5fc87f57ed09"
 WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
+[sources]
+Turbulox = {path = "lib/Turbulox"}
+
 [compat]
 Adapt = "4"
 CUDA = "5"
