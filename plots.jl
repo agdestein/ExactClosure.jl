@@ -35,7 +35,7 @@ let
         Turbulox.volumefilter!(v, u, compression)
         v
     end
-    fig = Figure(; size = (700, 270))
+    fig = Figure(; size = (700, 240))
     kwargs = (;
         # xlabelvisible = false,
         ylabelvisible = false,
@@ -52,7 +52,8 @@ let
     i = 1
     r = g_dns.n-A:g_dns.n
     bounds = g_dns.L/g_dns.n * (g_dns.n - A), g_dns.L
-    image!(
+    dns = u.data[r, r, end, i] |> Array
+    im = image!(
         Axis(
             fig[1, 1];
             kwargs...,
@@ -62,8 +63,9 @@ let
         ),
         bounds,
         bounds,
-        u.data[r, r, end, i] |> Array;
+        dns;
         imkwargs...,
+        colorrange = dns |> extrema,
     )
     for (j, v) in enumerate(ubar)
         compression = div(g_dns.n, v.grid.n)
@@ -76,8 +78,11 @@ let
             bounds,
             v.data[r, r, end, i] |> Array;
             imkwargs...,
+            colorrange = dns |> extrema,
         )
     end
+    # Colorbar(fig[0, 2:2], im; vertical = false)
+    Colorbar(fig[1, 4], im)
     colgap!(fig.layout, 10)
     file = joinpath(plotdir, "ns-fields-zoom.pdf")
     @info "Saving fields plot to $file"
