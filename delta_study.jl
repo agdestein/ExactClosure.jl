@@ -26,149 +26,116 @@ plotdir = "$outdir/figures" |> mkpath
 setup = let
     L = 2π
     nh = 3^8
-    nH = 3 .^ (5:7)
-    Δ_ratio = 2
+    nH = [3^5, 3^6, 3^7]
     visc = 5e-4
     kp = 10
     A = 2 / kp / 3 / sqrt(π)
     a = sqrt(2 * A)
     tstop = 0.1
-    nsample = 1000
+    nsample = 1
     seed = 1234
-    (; L, nh, nH, Δ_ratio, visc, kp, a, tstop, nsample, seed)
+    Δ_scalers = [0, 1, 2, 4, 8, 16, 32, 64]
+    (; L, nh, nH, visc, kp, a, tstop, nsample, seed, Δ_scalers)
 end
 setup |> pairs
-
-let
-    (; L, nh, nH, Δ_ratio) = setup
-    fig = Figure(; size = (400, 800))
-    for (i, nH) = enumerate(nH)
-        gh = Grid(L, nh)
-        gH = Grid(L, nH)
-        Δh = Burgers.h(gh)
-        ΔH = Burgers.h(gH)
-        Δ = 2 * ΔH
-        R, w = gaussian_weights(gh, Δ; nσ = 5)
-        RR = (-R:R) * Δh / ΔH
-        islast = i == 3
-        ratio = div(nh, nH)
-        r_gridfilter = div(ratio, 2)
-        w_gridfilter = map(r -> (abs(r) ≤ r_gridfilter) / ratio, -R:R)
-        w_hat = rfft(w)
-        w_gridfilter_hat = rfft(w_gridfilter)
-        w_double_hat = w_hat .* w_hat
-        w_double = circshift(irfft(w_double_hat, length(w)), -R)
-        ax = Axis(
-            fig[i, 1];
-            xlabel = "x",
-            ylabel = "Weight",
-            xticks = (-2:2, ["-2h", "-h", "0", "h", "2h"]),
-            xticksvisible = islast,
-            xticklabelsvisible = islast,
-            xlabelvisible = islast,
-            # yscale = log10, 
-        )
-        xlims!(ax, -2.6, 2.6)
-        # ylims!(ax, 1e-5, 1)
-        Label(
-            fig[i, 1],
-            "N = $nH";
-            # fontsize = 26,
-            font = :bold,
-            padding = (10, 10, 10, 10),
-            halign = :right,
-            valign = :top,
-            tellwidth = false,
-            tellheight = false,
-        )
-        scatter!(ax, RR, w; marker = :rect, label = "LES-filter")
-        scatter!(ax, RR, w_gridfilter; marker = :diamond, label = "Grid-filter")
-        scatter!(ax, RR, w_double; marker = :circle, label = "Double-filter")
-        islast && Legend(
-            fig[0, 1],
-            ax;
-            tellwidth = false,
-            orientation = :horizontal,
-            framevisible = false,
-        )
-    end
-    # rowgap!(fig.layout, 10)
-    save("$(plotdir)/burgers_filters.pdf", fig; backend = CairoMakie)
-    fig
-end
-
-
-# Plot Burgers solution
-let
-    (; L, nh, kp, a, visc, tstop, seed) = setup
-    g = Grid(L, nh)
-    Random.seed!(seed)
-    ustart = randomfield(Xoshiro(0), g, kp, a)
-    uh = copy(ustart)
-    t = 0.1
-    while t < tstop
-        dt = 0.3 * cfl(g, uh, visc)
-        dt = min(dt, tstop - t) # Don't overstep
-        uh = timestep(g, uh, visc, dt)
-        t += dt
-    end
-    xh = points_stag(g)
-    fig = Figure(; size = (400, 340))
-    ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u")
-    lines!(ax, xh, ustart; label = "Initial")
-    lines!(ax, xh, uh; label = "Final")
-    Legend(
-        fig[0, 1],
-        ax;
-        tellwidth = false,
-        orientation = :horizontal,
-        framevisible = false,
-    )
-    rowgap!(fig.layout, 5)
-    save("$plotdir/burgers_solution.pdf", fig; backend = CairoMakie)
-    fig
-end
 
 # DNS-aided LES
 series = map(setup.nH) do nH
     @show nH
-    (; L, nh, Δ_ratio, visc, kp, a, tstop, nsample, seed) = setup
+    (; L, nh, visc, kp, a, tstop, nsample, seed, Δ_scalers) = setup
     gh = Grid(L, nh)
     gH = Grid(L, nH)
-    Δ = Burgers.h(gH) * Δ_ratio
+    widths = Δ_scalers * Burgers.h(gH)
+    nΔ = length(widths)
     fields = (;
-        dns_ref = (; g = gh, u = zeros(nh, nsample), label = "DNS"),
-        dns_fil = (; g = gH, u = zeros(nH, nsample), label = "Filtered DNS"),
-        nomodel = (; g = gH, u = zeros(nH, nsample), label = "No model"),
-        classic = (; g = gH, u = zeros(nH, nsample), label = "Classic"),
-        swapfil = (; g = gH, u = zeros(nH, nsample), label = "Swap (ours)"),
+        dns_ref = (; g = gh, u = zeros(nh, nsample, nΔ), label = "DNS"),
+        dns_fil = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Filtered DNS"),
+        nomodel = (; g = gH, u = zeros(nH, nsample, nΔ), label = "No model"),
+        classic = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic"),
+        swapfil = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Swap (ours)"),
     )
-    Threads.@threads for i = 1:nsample
-    # for i = 1:nsample
+    Threads.@threads for (i, j) in Iterators.product(1:nsample, eachindex(widths)) |> collect
+        @show (i, j)
         rng = Xoshiro(i)
         ustart = randomfield(rng, gh, kp, a)
-        sols = Burgers.dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor = 0.3)
+        sols = Burgers.dns_aided_les(ustart, gh, gH, visc; Δ = widths[j], tstop, cfl_factor = 0.3)
         for key in keys(fields)
-            copyto!(view(fields[key].u, :, i), sols[key])
+            copyto!(view(fields[key].u, :, i, j), sols[key])
         end
     end
     (; nH, fields)
 end;
 
-save_object("$outdir/burgers_series.jld2", series)
+# save_object("$outdir/DeltaSeries.jld2", series)
+# series = load_object("$outdir/DeltaSeries.jld2")
 
 # Compute relative errors
 errseries = let
     fields = map([:nomodel, :classic, :swapfil]) do key
         e = map(series) do (; nH, fields)
             (; u) = fields[key]
-            norm(u - fields.dns_fil.u) / norm(fields.dns_fil.u)
+            map(axes(u, 3)) do i
+                ules = selectdim(u, 3, i)
+                uref = selectdim(fields.dns_fil.u, 3, i)
+                norm(ules - uref) / norm(uref)
+            end
         end
         key => (; e, series[1].fields[key].label)
     end
     (; nH = getindex.(series, :nH), fields = (; fields...))
 end;
 errseries.fields |> pairs
+
+let
+    fig = Figure(; size = (950, 500))
+    for (i, nH) in enumerate(errseries.nH)
+        ax_lin = Axis(
+            fig[1, i];
+            # yscale = log10,
+            xticklabelsvisible = false, 
+            xticksvisible = false, 
+            ylabel = "Relative error",
+            ylabelvisible = i == 1,
+            # yticklabelsvisible = i == 1,
+            title = "N = $nH",
+            xticks = (eachindex(setup.Δ_scalers), string.(setup.Δ_scalers)),
+        )
+        ax_log = Axis(
+            fig[2, i];
+            yscale = log10,
+            xlabel = "Δ / h",
+            ylabel = "Relative error",
+            ylabelvisible = i == 1,
+            # yticklabelsvisible = i == 1,
+            xticks = (eachindex(setup.Δ_scalers), string.(setup.Δ_scalers)),
+        )
+        # ylims!(ax_lin, -0.01, 0.12)
+        ylims!(ax_log, 1e-16, 1e1)
+        for ax in (ax_lin, ax_log)
+            vspan!(ax, 2, 4; alpha = 0.3, color = Cycled(4), label = "Common filter widths")
+        end
+        widths = setup.Δ_scalers
+        for (j, key) in [:nomodel, :classic, :swapfil] |> enumerate
+            e = errseries.fields[key].e[i]
+            color = Cycled(j)
+            label = errseries.fields[key].label
+            key != :nomodel && scatterlines!(ax_lin, e; label, color)
+            scatterlines!(ax_log, e; label, color)
+        end
+        # ii = 2:8
+        # lines!(ax, ii, map(x -> 3e-2 * 2.0^(-1(x-1)), ii))
+        i == 1 && Legend(
+            fig[0, 1:3],
+            ax_log;
+            tellwidth = false,
+            orientation = :horizontal,
+            framevisible = false,
+        )
+    end
+    rowgap!(fig.layout, 10)
+    save("$plotdir/burgers_delta_errors.pdf", fig; backend = CairoMakie)
+    fig
+end
 
 # Write errors to LaTeX table
 let
@@ -230,14 +197,13 @@ let
             xlabelvisible = islast,
         )
         tip = specs.dns_fil
-        # o = (22, 70, 210)[i]
-        o = (22, 38, 80)[i]
+        o = (22, 70, 210)[i]
         ax_zoom = ExactClosure.zoombox!(
             f[i, 1],
             ax;
             point = (tip.k[end-o], tip.e[end-o]),
             logx = 1.3,
-            logy = 2.5,
+            logy = 1.6,
             relwidth = 0.45,
             relheight = 0.45,
         )
@@ -281,21 +247,15 @@ end
 
 # Compute dissipation coefficients
 diss = let
-    (; visc, Δ_ratio) = setup
+    (; visc) = setup
     map(series) do (; nH, fields)
         gh = Grid(setup.L, setup.nh)
         gH = Grid(setup.L, nH)
-        Δ = Burgers.h(gH) * Δ_ratio
-        kernel = gaussian_weights(gh, Δ)
-        filter!(bar, u) = convolution!(gh, kernel, bar, u)
-        bar = zeros(gh.n)
         d = stack(eachcol(fields.dns_ref.u)) do uh
             su = map(i -> stress(gh, uh, visc, i), 1:gh.n)
-            #! format: off
-            filter!(bar, su); vsu = volavg_coll!(gH, gh, zeros(nH), bar)
-            filter!(bar, su); fsu = suravg_coll!(gH, gh, zeros(nH), bar)
-            filter!(bar, uh); vu = volavg_stag!(gH, gh, zeros(nH), bar)
-            #! format: on
+            vsu = volavg_coll!(gH, gh, zeros(nH), su)
+            fsu = suravg_coll!(gH, gh, zeros(nH), su)
+            vu = volavg_stag!(gH, gh, zeros(nH), uh)
             svu = map(i -> stress(gH, vu, visc, i), 1:gH.n)
             σ_classic = vsu - svu
             σ_swapfil = fsu - svu
@@ -362,9 +322,7 @@ let
     for (i, diss) in diss |> enumerate
         n = setup.nH[i]
         g = Grid(setup.L, n)
-        Δx = Burgers.h(g)
-        Δ = setup.Δ_ratio * Δx
-        a = 1.0e2
+        a = 2.8e2
         ax = Axis(
             fig[i, 1];
             xlabelvisible = i == 3,
@@ -374,10 +332,10 @@ let
             ylabel = "Density",
             yscale = log10,
         )
-        xlims!(ax, -0.5 *  a, 0.5 * a)
-        ylims!(ax, 1e-4, 1.0e-1)
+        xlims!(ax, -0.4 *  a, 0.3 * a)
+        ylims!(ax, 1e-4, 2.5e-1)
         for (j, model) in enumerate(models)
-            d = diss[model.sym] / (Δ^2 + Δx^2)
+            d = diss[model.sym] / Burgers.h(g)^2
             s = median(d)
             if model.sym == :nomodel
                 lines!(ax, [Point2(s, 1e-5), Point2(s, 1e0)]; color = Cycled(j + 1), model.label)
