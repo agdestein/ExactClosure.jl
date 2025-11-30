@@ -38,6 +38,77 @@ setup = let
 end
 setup |> pairs
 
+# Plot Gaussian kernel only
+let
+    (; L) = setup
+    fig = Figure(; size = (400, 800))
+    nh = 8000
+    Δ_ratios = [1, 2, 3]
+    for (iratio, Δ_ratio) in enumerate(Δ_ratios)
+        gh = Grid(L, nh)
+        h = L / nh
+        H = 150 * h
+        Δ = Δ_ratio * H
+        I = round(Int, H / 2h)
+        f = fill(1 / (2I + 1), 2I + 1)
+        J, g = gaussian_weights(gh, Δ; nσ = 3.3)
+        K = I + J
+        d = map((-K):K) do k
+            sum((-J):J) do j
+                i = k - j
+                if abs(i) ≤ I
+                    f[I+1+i] * g[J+1+j]
+                else
+                    zero(eltype(f))
+                end
+            end
+        end
+        II = ((-I):I) * h / H
+        JJ = ((-J):J) * h / H
+        KK = ((-K):K) * h / H
+        ff = [zeros(K - I); f; zeros(K - I)] # Pad with zeros
+        gg = [zeros(K - J); g; zeros(K - J)] # Pad with zeros
+        islast = iratio == length(Δ_ratios)
+        ax = Axis(
+            fig[iratio, 1];
+            xlabel = "x / h",
+            ylabel = "Weight",
+            # xticksvisible = islast,
+            # xticklabelsvisible = islast,
+            xlabelvisible = islast,
+        )
+        # xlims!(ax, -3, 3)
+        # ylims!(ax, 1e-5, 1)
+        Label(
+            fig[iratio, 1],
+            "Δ = $(Δ_ratio)h";
+            # fontsize = 26,
+            font = :bold,
+            padding = (10, 10, 10, 10),
+            halign = :right,
+            valign = :top,
+            tellwidth = false,
+            tellheight = false,
+            color = Makie.wong_colors()[1],
+        )
+        lines!(ax, KK, gg * H / h; label = "LES-filter")
+        lines!(ax, KK, ff * H / h; label = "Grid-filter")
+        lines!(ax, KK, d * H / h; label = "Double-filter")
+        # R, w = gaussian_weights(gh, sqrt(Δ^2 + H^2); nσ = 5)
+        # scatter!(ax, (-R:R) * h / H, w; marker = :circle, label = "Haha")
+        iratio == 1 && Legend(
+            fig[0, 1],
+            ax;
+            tellwidth = false,
+            orientation = :horizontal,
+            framevisible = false,
+        )
+    end
+    # rowgap!(fig.layout, 10)
+    save("$(plotdir)/burgers_filters_gaussian.pdf", fig; backend = CairoMakie)
+    fig
+end
+
 # Plot continuous kernels
 let
     (; L) = setup
@@ -247,7 +318,6 @@ end
 
 # DNS-aided LES
 series = map(setup.nH) do nH
-    @show nH
     (; L, nh, Δ_ratio, visc, kp, a, tstop, nsample) = setup
     gh = Grid(L, nh)
     gH = Grid(L, nH)
@@ -262,7 +332,7 @@ series = map(setup.nH) do nH
     )
     # Threads.@threads for i = 1:nsample
     for i = 1:nsample
-        @show i
+        @info "N = $nH, sample $i of $nsample"
         rng = Xoshiro(i)
         ustart = randomfield(rng, gh, kp, a)
         sols = Burgers.dns_aided_les(
@@ -370,17 +440,21 @@ let
             relheight = 0.45,
         )
         styles = (;
-            dns_ref = (; color = Cycled(1)),
-            dns_fil = (; color = Cycled(1), linestyle = :dash),
-            nomodel = (; color = Cycled(2)),
-            class_m = (; color = Cycled(3), linestyle = :dash),
+            dns_ref = (; color = :black),
+            dns_fil = (; color = :black, linestyle = :dash),
+            nomodel = (; color = Cycled(1)),
+            class_m = (; color = Cycled(2)),
             class_p = (; color = Cycled(3)),
             swapfil = (; color = Cycled(4)),
         )
         for key in [:dns_ref, :nomodel, :class_m, :class_p, :swapfil, :dns_fil]
             (; k, e, label) = specs[key]
-            lines!(ax, k, e; label, styles[key]...)
-            lines!(ax_zoom, k, e; styles[key]...)
+            # At the end of the spectrum, there are too many points for plotting.
+            # Choose a logarithmically equispaced subset of points instead
+            npoint = 500
+            ii = round.(Int, logrange(1, length(k), npoint)) |> unique
+            lines!(ax, k[ii], e[ii]; label, styles[key]...)
+            lines!(ax_zoom, k[ii], e[ii]; styles[key]...)
         end
         Label(
             f[i, 1],
@@ -409,32 +483,7 @@ let
 end
 
 # Compute dissipation coefficients
-diss = let
-    (; visc, Δ_ratio) = setup
-    map(series) do (; nH, fields)
-        gh = Grid(setup.L, setup.nh)
-        gH = Grid(setup.L, nH)
-        Δ = Burgers.h(gH) * Δ_ratio
-        kernel = gaussian_weights(gh, Δ)
-        filter!(bar, u) = convolution!(gh, kernel, bar, u)
-        bar = zeros(gh.n)
-        d = stack(eachcol(fields.dns_ref.u)) do uh
-            su = map(i -> stress(gh, uh, visc, i), 1:gh.n)
-            #! format: off
-            filter!(bar, su); vsu = volavg_coll!(gH, gh, zeros(nH), bar)
-            filter!(bar, su); fsu = suravg_coll!(gH, gh, zeros(nH), bar)
-            filter!(bar, uh); vu = volavg_stag!(gH, gh, zeros(nH), bar)
-            #! format: on
-            svu = map(i -> stress(gH, vu, visc, i), 1:gH.n)
-            σ_classic = vsu - svu
-            σ_swapfil = fsu - svu
-            d_classic = dissipation(gH, vu, σ_classic)
-            d_swapfil = dissipation(gH, vu, σ_swapfil)
-            hcat(d_classic, d_swapfil)
-        end
-        (; nomodel = zeros(1), classic = d[:, 1, :] |> vec, swapfil = d[:, 2, :] |> vec)
-    end
-end;
+diss = compute_dissipation(series, setup, :gaussian)
 
 # Plot dissipation coefficient density
 let
@@ -484,14 +533,15 @@ end
 let
     models = [
         (; label = "No-model", sym = :nomodel),
-        (; label = "Classic", sym = :classic),
+        (; label = "Classic", sym = :class_m),
+        (; label = "Classic+", sym = :class_p),
         (; label = "Swap (ours)", sym = :swapfil),
     ]
     fig = Figure(; size = (400, 800))
     for (i, diss) in diss |> enumerate
         n = setup.nH[i]
         g = Grid(setup.L, n)
-        Δx = Burgers.h(g)
+        Δx = spacing(g)
         Δ = setup.Δ_ratio * Δx
         a = 1.0e2
         ax = Axis(
@@ -512,13 +562,13 @@ let
                 lines!(
                     ax,
                     [Point2(s, 1e-5), Point2(s, 1e0)];
-                    color = Cycled(j + 1),
+                    color = Cycled(j),
                     model.label,
                 )
             else
-                # lines!(ax, [Point2(s, 1e-5), Point2(s, 1e0)]; color = Cycled(j + 1), linestyle = :dash)
+                # lines!(ax, [Point2(s, 1e-5), Point2(s, 1e0)]; color = Cycled(j), linestyle = :dash)
                 k = kde(d; boundary = (-a, a))
-                lines!(ax, k.x, k.density; model.label, color = Cycled(j + 1))
+                lines!(ax, k.x, k.density; model.label, color = Cycled(j))
             end
         end
         Label(
@@ -537,6 +587,7 @@ let
             tellwidth = false,
             orientation = :horizontal,
             framevisible = false,
+            nbanks = 2,
         )
     end
     # rowgap!(fig.layout, 10)

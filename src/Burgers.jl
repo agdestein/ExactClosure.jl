@@ -289,6 +289,95 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
     u
 end
 
+function compute_dissipation(series, setup, lesfiltertype)
+    (; visc, Δ_ratio) = setup
+    map(series) do (; nH, fields)
+        gh = Grid(setup.L, setup.nh)
+        gH = Grid(setup.L, nH)
+        Δ = spacing(gH) * Δ_ratio
+
+        # Filter kernels
+        fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
+        leskernel = if lesfiltertype == :tophat
+            lescomp = round(Int, Δ / spacing(gh))
+            R = div(lescomp, 2)
+            lescomp = 2 * R + 1 # Ensure odd
+            tophat_weights(gH, lescomp)
+        elseif lesfiltertype == :gaussian
+            gaussian_weights(gh, Δ)
+        end
+
+        # Build double-filter kernel
+        I, f = fvmkernel
+        J, g = leskernel
+        K = I + J
+        w_double = map((-K):K) do k
+            sum((-J):J) do j
+                i = k - j
+                if abs(i) ≤ I
+                    f[I+1+i] * g[J+1+j]
+                else
+                    zero(eltype(f))
+                end
+            end
+        end
+        doublekernel = K, w_double
+
+        # Allocate arrays
+        su = zeros(gh.n)
+        fsu = zeros(gH.n)
+        vsu = zeros(gH.n)
+        vu = zeros(gH.n)
+        VU = zeros(gh.n) # Same as vu, but on DNS grid
+        σ_class_m = zeros(gH.n)
+        σ_class_p = zeros(gH.n)
+        σ_swapfil = zeros(gH.n)
+
+        d = stack(eachcol(fields.dns_ref.u)) do uh
+            # DNS stress
+            AK.foreachindex(su) do i
+                @inbounds su[i] = stress(gh, uh, visc, i)
+            end
+            AK.synchronize(AK.get_backend(su))
+
+            # Filtered stresses
+            coarsegrain_convolve_coll!(gH, gh, fsu, su, leskernel)
+            coarsegrain_convolve_coll!(gH, gh, vsu, su, doublekernel)
+
+            # Filtered velocity
+            coarsegrain_convolve_stag!(gH, gh, vu, uh, doublekernel)
+            convolution!(gh, doublekernel, VU, uh)
+
+            # LES stresses
+            comp = div(gh.n, gH.n)
+            a = div(comp, 2)
+            AK.foreachindex(vu) do i
+                @inbounds svu = stress(gH, vu, visc, i)
+                @inbounds sVU = stress(gh, VU, visc, i * comp - a)
+                @inbounds σ_class_m[i] = vsu[i] - sVU
+                @inbounds σ_class_p[i] = vsu[i] - svu
+                @inbounds σ_swapfil[i] = fsu[i] - svu
+            end
+            AK.synchronize(AK.get_backend(vu))
+
+            # Dissipation coefficients
+            d_class_m = dissipation(gH, vu, σ_class_m)
+            d_class_p = dissipation(gH, vu, σ_class_p)
+            d_swapfil = dissipation(gH, vu, σ_swapfil)
+
+            hcat(d_class_m, d_class_p, d_swapfil)
+        end
+
+        (;
+            nomodel = zeros(1),
+            class_m = d[:, 1, :] |> vec,
+            class_p = d[:, 2, :] |> vec,
+            swapfil = d[:, 3, :] |> vec,
+        )
+    end
+end
+export compute_dissipation
+
 export Grid,
     points_stag,
     points_coll,
