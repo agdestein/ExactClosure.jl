@@ -50,7 +50,7 @@ let
     A = 90
     imkwargs = (; colormap = :seaborn_icefire_gradient, interpolate = false)
     i = 1
-    r = g_dns.n-A:g_dns.n
+    r = (g_dns.n-A):g_dns.n
     bounds = g_dns.L/g_dns.n * (g_dns.n - A), g_dns.L
     dns = u.data[r, r, end, i] |> Array
     im = image!(
@@ -70,7 +70,7 @@ let
     for (j, v) in enumerate(ubar)
         compression = div(g_dns.n, v.grid.n)
         a = div(A, compression)
-        r = v.grid.n-a:v.grid.n
+        r = (v.grid.n-a):v.grid.n
         bounds = v.grid.L/v.grid.n * (v.grid.n - a), v.grid.L
         image!(
             Axis(fig[1, 1+(length(ubar)+1-j)]; kwargs...),

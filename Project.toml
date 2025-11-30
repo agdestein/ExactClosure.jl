@@ -1,9 +1,10 @@
 name = "ExactClosure"
 uuid = "72b019ed-8d6c-4174-99c0-d6632ea0e54c"
-authors = ["Syver Døving Agdestein <syverda@gmail.com>"]
 version = "1.0.0"
+authors = ["Syver Døving Agdestein <syverda@gmail.com>"]
 
 [deps]
+AcceleratedKernels = "6a4ca0a5-0e36-4168-a932-d9be78d558f1"
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
@@ -22,7 +23,11 @@ Turbulox = "25c03aae-1219-43c4-862d-5fc87f57ed09"
 WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
+[sources]
+Turbulox = {path = "../Turbulox"}
+
 [compat]
+AcceleratedKernels = "0.4"
 Adapt = "4"
 CUDA = "5"
 CairoMakie = "0.15"
