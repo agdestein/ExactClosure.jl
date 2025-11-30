@@ -126,7 +126,14 @@ let
             # ylims!(ax_lin, -0.01, 0.12)
             ylims!(ax_log, 1e-16, 1e1)
             for ax in (ax_lin, ax_log)
-                vspan!(ax, 1, 4; alpha = 0.3, color = Cycled(5), label = "Common filter widths")
+                vspan!(
+                    ax,
+                    1,
+                    4;
+                    alpha = 0.3,
+                    color = Cycled(5),
+                    label = "Common filter widths",
+                )
             end
             widths = setup.Δ_scalers
             for (j, key) in [:nomodel, :class_m, :class_p, :swapfil] |> enumerate

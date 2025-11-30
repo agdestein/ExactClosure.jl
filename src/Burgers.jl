@@ -33,10 +33,12 @@ cfl(g, u, visc) = min(spacing(g) / maximum(abs, u), spacing(g)^2 / visc)
 function timestep!(g, u, s, visc, dt)
     AK.foreachindex(u) do i
         s[i] = stress(g, u, visc, i)
-    end; AK.synchronize(AK.get_backend(u))
+    end
+    AK.synchronize(AK.get_backend(u))
     AK.foreachindex(u) do i
         u[i] += dt * δ_coll(g, s, i)
-    end; AK.synchronize(AK.get_backend(u))
+    end
+    AK.synchronize(AK.get_backend(u))
 end
 
 # Filters
@@ -69,7 +71,8 @@ function convolution!(g, kernel, ubar, u)
             @inbounds s += w[r+R+1] * u[i+r|>g]
         end
         @inbounds ubar[i] = s
-    end; AK.synchronize(AK.get_backend(ubar))
+    end
+    AK.synchronize(AK.get_backend(ubar))
     ubar
 end
 export convolution!
@@ -80,10 +83,11 @@ function coarsegrain_convolve_stag!(gH, gh, uH, uh, kernel)
     AK.foreachindex(uH) do i
         s = zero(eltype(uH))
         for r = (-R):R
-            @inbounds s += w[R + 1 + r] * uh[i*comp+r|>gh]
+            @inbounds s += w[R+1+r] * uh[i*comp+r|>gh]
         end
         @inbounds uH[i] = s
-    end; AK.synchronize(AK.get_backend(uH))
+    end
+    AK.synchronize(AK.get_backend(uH))
     uH
 end
 export coarsegrain_convolve_stag!
@@ -95,10 +99,11 @@ function coarsegrain_convolve_coll!(gH, gh, pH, ph, kernel)
     AK.foreachindex(pH) do i
         s = zero(eltype(pH))
         for r = (-R):R
-            @inbounds s += w[R + 1 + r] * ph[i*comp - a + r|>gh]
+            @inbounds s += w[R+1+r] * ph[i*comp-a+r|>gh]
         end
         @inbounds pH[i] = s
-    end; AK.synchronize(AK.get_backend(pH))
+    end
+    AK.synchronize(AK.get_backend(pH))
     pH
 end
 export coarsegrain_convolve_coll!
@@ -113,7 +118,8 @@ function volavg_stag!(gH, gh, uH, uh)
             @inbounds s += uh[i*comp+r|>gh] / comp
         end
         @inbounds uH[i] = s
-    end; AK.synchronize(AK.get_backend(uH))
+    end
+    AK.synchronize(AK.get_backend(uH))
     uH
 end
 
@@ -125,7 +131,8 @@ function volavg_coll!(gH, gh, pH, ph)
             @inbounds s += ph[(i-1)*comp+j] / comp
         end
         @inbounds pH[i] = s
-    end; AK.synchronize(AK.get_backend(pH))
+    end
+    AK.synchronize(AK.get_backend(pH))
     pH
 end
 
@@ -133,7 +140,8 @@ function suravg_stag!(gH, gh, uH, uh)
     comp = div(gh.n, gH.n)
     AK.foreachindex(uH) do i
         @inbounds uH[i] = uh[i*comp]
-    end; AK.synchronize(AK.get_backend(uH))
+    end
+    AK.synchronize(AK.get_backend(uH))
     uH
 end
 
@@ -143,7 +151,8 @@ function suravg_coll!(gH, gh, pH, ph)
     @assert 2 * R + 1 == comp "Use odd compression."
     AK.foreachindex(pH) do i
         @inbounds pH[i] = ph[i*comp-R]
-    end; AK.synchronize(AK.get_backend(pH))
+    end
+    AK.synchronize(AK.get_backend(pH))
     pH
 end
 
@@ -162,7 +171,8 @@ dissipation(g, u, s) =
 function dissipation!(g, d, u, s)
     AK.foreachindex(d) do i
         @inbounds d[i] = s[i] * δ_stag(g, u, i)
-    end; AK.synchronize(AK.get_backend(d))
+    end
+    AK.synchronize(AK.get_backend(d))
 end
 
 # Compare closure formulations
@@ -172,15 +182,14 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
 
     # Filter kernels
     fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
-    leskernel =
-        if lesfiltertype == :tophat
-            lescomp = round(Int, Δ / spacing(gh))
-            R = div(lescomp, 2)
-            lescomp = 2 * R + 1 # Ensure odd
-            tophat_weights(gH, lescomp)
-        elseif lesfiltertype == :gaussian
-            gaussian_weights(gh, Δ)
-        end
+    leskernel = if lesfiltertype == :tophat
+        lescomp = round(Int, Δ / spacing(gh))
+        R = div(lescomp, 2)
+        lescomp = 2 * R + 1 # Ensure odd
+        tophat_weights(gH, lescomp)
+    elseif lesfiltertype == :gaussian
+        gaussian_weights(gh, Δ)
+    end
 
     # Build double-filter kernel
     I, f = fvmkernel
@@ -231,7 +240,8 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
         # DNS stress
         AK.foreachindex(su) do i
             @inbounds su[i] = stress(gh, u.dns_ref, visc, i)
-        end; AK.synchronize(AK.get_backend(su))
+        end
+        AK.synchronize(AK.get_backend(su))
 
         # Filtered stresses
         coarsegrain_convolve_coll!(gH, gh, fsu, su, leskernel)
@@ -251,12 +261,14 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
             @inbounds σ_class_m[i] = stress(gH, u.class_m, visc, i) + vsu[i] - sVU
             @inbounds σ_class_p[i] = stress(gH, u.class_p, visc, i) + vsu[i] - svu
             @inbounds σ_swapfil[i] = stress(gH, u.swapfil, visc, i) + fsu[i] - svu
-        end; AK.synchronize(AK.get_backend(uH))
+        end
+        AK.synchronize(AK.get_backend(uH))
 
         # DNS time step
         AK.foreachindex(uh) do i
             @inbounds u.dns_ref[i] += dt * δ_coll(gh, su, i)
-        end; AK.synchronize(AK.get_backend(uh))
+        end
+        AK.synchronize(AK.get_backend(uh))
 
         # LES time steps
         AK.foreachindex(uH) do i
@@ -264,7 +276,8 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
             @inbounds u.class_m[i] += dt * δ_coll(gH, σ_class_m, i)
             @inbounds u.class_p[i] += dt * δ_coll(gH, σ_class_p, i)
             @inbounds u.swapfil[i] += dt * δ_coll(gH, σ_swapfil, i)
-        end; AK.synchronize(AK.get_backend(uh))
+        end
+        AK.synchronize(AK.get_backend(uh))
 
         # Time step
         t += dt

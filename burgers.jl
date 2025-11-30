@@ -26,14 +26,14 @@ plotdir = "$outdir/figures" |> mkpath
 setup = let
     L = 2π
     nh = 3^8
-    nH = 3 .^ (5:5)
+    nH = 3 .^ (5:7)
     Δ_ratio = 2
     visc = 5e-4
     kp = 10
     A = 2 / kp / 3 / sqrt(π)
     a = sqrt(2 * A)
     tstop = 0.1
-    nsample = 10
+    nsample = 1000
     (; L, nh, nH, Δ_ratio, visc, kp, a, tstop, nsample)
 end
 setup |> pairs
@@ -265,7 +265,16 @@ series = map(setup.nH) do nH
         @show i
         rng = Xoshiro(i)
         ustart = randomfield(rng, gh, kp, a)
-        sols = Burgers.dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor = 0.3)
+        sols = Burgers.dns_aided_les(
+            ustart,
+            gh,
+            gH,
+            visc;
+            Δ,
+            tstop,
+            cfl_factor = 0.3,
+            lesfiltertype = :gaussian,
+        )
         for key in keys(fields)
             copyto!(view(fields[key].u, :, i), sols[key])
         end
