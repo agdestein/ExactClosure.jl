@@ -1,7 +1,25 @@
 "1D simulation."
 module Burgers
 
+export Grid,
+    points_stag,
+    points_coll,
+    δ_stag,
+    δ_coll,
+    stress,
+    cfl,
+    timestep!,
+    volavg_stag!,
+    volavg_coll!,
+    suravg_stag!,
+    suravg_coll!,
+    randomfield,
+    dissipation,
+    dissipation!,
+    spacing
+
 using FFTW
+using Random
 import AcceleratedKernels as AK
 
 "Uniform grid of length `L` and `n` volumes."
@@ -175,25 +193,10 @@ function dissipation!(g, d, u, s)
     AK.synchronize(AK.get_backend(d))
 end
 
-# Compare closure formulations
-function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertype)
-    uh = ustart
-    bar = zero(uh)
-
-    # Filter kernels
-    fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
-    leskernel = if lesfiltertype == :tophat
-        lescomp = round(Int, Δ / spacing(gh))
-        R = div(lescomp, 2)
-        lescomp = 2 * R + 1 # Ensure odd
-        tophat_weights(gH, lescomp)
-    elseif lesfiltertype == :gaussian
-        gaussian_weights(gh, Δ)
-    end
-
-    # Build double-filter kernel
-    I, f = fvmkernel
-    J, g = leskernel
+"Combine two filter kernels into a double-filter kernel."
+function build_doublekernel(F, G)
+    I, f = F
+    J, g = G
     K = I + J
     w_double = map((-K):K) do k
         sum((-J):J) do j
@@ -205,7 +208,24 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
             end
         end
     end
-    doublekernel = K, w_double
+    K, w_double
+end
+
+# Compare closure formulations
+function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertype)
+    uh = ustart
+
+    # Filter kernels
+    fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
+    leskernel = if lesfiltertype == :tophat
+        lescomp = round(Int, Δ / spacing(gh))
+        R = div(lescomp, 2)
+        lescomp = 2 * R + 1 # Ensure odd
+        tophat_weights(gH, lescomp)
+    elseif lesfiltertype == :gaussian
+        gaussian_weights(gh, Δ)
+    end
+    doublekernel = build_doublekernel(fvmkernel, leskernel)
 
     # Initial double-filtered state
     uH = zeros(gH.n)
@@ -308,20 +328,7 @@ function compute_dissipation(series, setup, lesfiltertype)
         end
 
         # Build double-filter kernel
-        I, f = fvmkernel
-        J, g = leskernel
-        K = I + J
-        w_double = map((-K):K) do k
-            sum((-J):J) do j
-                i = k - j
-                if abs(i) ≤ I
-                    f[I+1+i] * g[J+1+j]
-                else
-                    zero(eltype(f))
-                end
-            end
-        end
-        doublekernel = K, w_double
+        doublekernel = build_doublekernel(fvmkernel, leskernel)
 
         # Allocate arrays
         su = zeros(gh.n)
@@ -378,21 +385,58 @@ function compute_dissipation(series, setup, lesfiltertype)
 end
 export compute_dissipation
 
-export Grid,
-    points_stag,
-    points_coll,
-    δ_stag,
-    δ_coll,
-    stress,
-    cfl,
-    timestep!,
-    volavg_stag!,
-    volavg_coll!,
-    suravg_stag!,
-    suravg_coll!,
-    randomfield,
-    dissipation,
-    dissipation!,
-    spacing
+function create_dns(setup; cfl_factor)
+    (; L, nh, kp, a, visc, tstop, nsample) = setup
+    g = Grid(L, nh)
+    Ustart = zeros(nh, nsample)
+    U = zeros(nh, nsample)
+    for i = 1:nsample
+        @info "DNS sample $i of $nsample"
+        ustart = randomfield(Xoshiro(i), g, kp, a)
+        u = copy(ustart)
+        s = zero(ustart)
+        t = 0.0
+        while t < tstop
+            dt = cfl_factor * cfl(g, u, visc) # Propose timestep
+            dt = min(dt, tstop - t) # Don't overstep
+            timestep!(g, u, s, visc, dt) # Perform timestep
+            t += dt
+        end
+        Ustart[:, i] = ustart
+        U[:, i] = u
+    end
+    Ustart, U
+end
+export create_dns
+
+function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
+    (; L, nh, nH, Δ_ratio) = setup
+    map(nH) do nH
+        gh = Grid(L, nh)
+        gH = Grid(L, nH)
+        _, U = dnsdata
+
+        Δ = spacing(gH) * Δ_ratio
+
+        # Filter kernels
+        fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
+        leskernel = if lesfiltertype == :tophat
+            lescomp = round(Int, Δ / spacing(gh))
+            R = div(lescomp, 2)
+            lescomp = 2 * R + 1 # Ensure odd
+            tophat_weights(gH, lescomp)
+        elseif lesfiltertype == :gaussian
+            gaussian_weights(gh, Δ)
+        end
+        doublekernel = build_doublekernel(fvmkernel, leskernel)
+
+
+
+
+
+        nothing
+    end
+end
+export fit_smagcoeffs
 
 end
