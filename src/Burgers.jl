@@ -430,8 +430,9 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         end
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
-
-
+        τclass_m = zeros(gh.n)
+        sh = zeros(gh.n)
+        σh = zeros(gh.n)
 
 
         nothing
