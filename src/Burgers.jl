@@ -416,6 +416,7 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         gh = Grid(L, nh)
         gH = Grid(L, nH)
         _, U = dnsdata
+        # U, _ = dnsdata
 
         H = spacing(gh)
         Δ = H * Δ_ratio
@@ -432,15 +433,19 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         end
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
-        τclass_m = zeros(gh.n)
+        th = zeros(gh.n)
         σh = zeros(gh.n)
         σh_double1 = zeros(gh.n)
         σh_double2 = zeros(gh.n)
         uh_double = zeros(gh.n)
         sh = zeros(gh.n)
+        D_sh = zeros(gh.n)
+        D_th = zeros(gh.n)
 
         Sh = zero(U)
         Th = zero(U)
+        D_Sh = zero(U)
+        D_Th = zero(U)
 
         # uh = U[:, 1]
         foreach(axes(U, 2)) do j
@@ -450,26 +455,36 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
             AK.foreachindex(uh) do i
                 σh[i] = stress(gh, uh, visc, i)
             end
-            coarsegrain_convolve_coll!(gH, gh, σh_double1, σh, doublekernel)
+            convolution!(gh, doublekernel, σh_double1, σh)
             convolution!(gh, doublekernel, uh_double, uh)
             AK.foreachindex(uh) do i
                 σh_double2[i] = stress(gh, uh_double, visc, i)
-                τclass_m[i] = σh_double1[i] - σh_double2[i]
+                th[i] = σh_double1[i] - σh_double2[i]
             end
 
             # Compute Smagorinsky stress
             AK.foreachindex(uh_double) do i
                 δu = δ_stag(gh, uh_double, i)
-                sh[i] = (Δ^2 + H^2) * abs(δu) * δu
+                sh[i] = -(Δ^2 + H^2) * abs(δu) * δu
+            end
+
+            # Compute dissipation coefficients
+            AK.foreachindex(uh_double) do i
+                δu = δ_stag(gh, uh_double, i)
+                D_sh[i] = -(Δ^2 + H^2) * sh[i] * δu # Smag
+                D_th[i] = th[i] * δu # True
             end
 
             Sh[:, j] = sh
-            Th[:, j] = τclass_m
+            Th[:, j] = th
+            D_Sh[:, j] = D_sh
+            D_Th[:, j] = D_th
         end
 
-        # @show dot(Sh, Th), dot(Sh, Sh)
-        θ2 = -dot(Sh, Th) / dot(Sh, Sh) # / (Δ^2 + H^2)
-        # θ2 = sum(.-Th ./ Sh) / prod(size(Sh))
+        θ2 = -dot(Sh, Th) / dot(Sh, Sh)
+        # θ2 = dot(D_Sh, D_Th) / dot(D_Sh, D_Sh)
+        # θ2 = sum(D_Th) / sum(D_Sh)
+        @show θ2
         θ2 = max(θ2, 0.0)
         θ = sqrt(θ2)
 

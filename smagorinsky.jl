@@ -44,8 +44,13 @@ dnsdata = create_dns(setup; cfl_factor = 0.3);
 # dnsdata = load_object("$outdir/burgers_dns.jld2")
 
 smagcoeffs = fit_smagcoeffs(setup, dnsdata; lesfiltertype = :gaussian);
-
 getindex.(smagcoeffs, 1)
+
+# 3-element Vector{Float64}:
+#  1.3078695085917662
+#  0.6567297859704491
+#  0.38678361976428427
+
 
 let
     fig = Figure()
@@ -60,20 +65,24 @@ let
 end
 
 let
-    θ, S, T = smagcoeffs[3]
+    θ, S, T = smagcoeffs[1]
     Ustart, U = dnsdata
     i = 1
+    ustart = Ustart[:, i]
     u = U[:, i]
     s = S[:, i]
     t = T[:, i]
     fig = Figure()
     axu = Axis(fig[1, 1]; ylabel = "u", xticklabelsvisible = false)
+    lines!(axu, ustart)
     lines!(axu, u)
     axs = Axis(fig[2, 1]; xticklabelsvisible = false, ylabel = "s")
     lines!(axs, s)
     axt = Axis(fig[3, 1]; xlabel = "x", ylabel = "t")
     lines!(axt, t)
+    lines!(axt, -15s)
     linkxaxes!(axu, axs, axt)
+    xlims!(axt, 1800, 2000)
     fig
 end
 
