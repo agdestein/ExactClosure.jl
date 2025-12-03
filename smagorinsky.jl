@@ -25,15 +25,15 @@ plotdir = "$outdir/figures" |> mkpath
 
 setup = let
     L = 2π
-    nh = 3^8
-    nH = 3 .^ (5:7)
+    nh = 2^5 * 3^6
+    nH = 2^5 .* 3 .^ (2:5)
     Δ_ratio = 2
     visc = 5e-4
     kp = 10
     A = 2 / kp / 3 / sqrt(π)
     a = sqrt(2 * A)
     tstop = 0.1
-    nsample = 1000
+    nsample = 1
     (; L, nh, nH, Δ_ratio, visc, kp, a, tstop, nsample)
 end
 setup |> pairs
@@ -44,6 +44,17 @@ dnsdata = create_dns(setup; cfl_factor = 0.3)
 # dnsdata = load_object("$outdir/burgers_dns.jld2")
 
 smagcoeffs = fit_smagcoeffs(setup, dnsdata; lesfiltertype = :gaussian)
+
+let
+    i = 2
+    u, ubar = smagcoeffs[i][2], smagcoeffs[i][3]
+    fig = Figure()
+    ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u", title = "DNS vs Filtered DNS")
+    lines!(ax, u; label = "DNS")
+    lines!(ax, ubar; label = "Filtered DNS")
+    axislegend(ax; position = :rt)
+    fig
+end
 
 
 

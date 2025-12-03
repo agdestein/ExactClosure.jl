@@ -19,6 +19,7 @@ export Grid,
     spacing
 
 using FFTW
+using LinearAlgebra
 using Random
 import AcceleratedKernels as AK
 
@@ -410,13 +411,14 @@ end
 export create_dns
 
 function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
-    (; L, nh, nH, Δ_ratio) = setup
+    (; L, nh, nH, visc, Δ_ratio) = setup
     map(nH) do nH
         gh = Grid(L, nh)
         gH = Grid(L, nH)
         _, U = dnsdata
 
-        Δ = spacing(gH) * Δ_ratio
+        H = spacing(gh)
+        Δ = H * Δ_ratio
 
         # Filter kernels
         fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
@@ -431,11 +433,37 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
         τclass_m = zeros(gh.n)
-        sh = zeros(gh.n)
         σh = zeros(gh.n)
+        σh_double1 = zeros(gh.n)
+        σh_double2 = zeros(gh.n)
+        uh_double = zeros(gh.n)
+        sh = zeros(gh.n)
 
+        uh = U[:, 1]
 
-        nothing
+        # Compute sub-filter stress
+        AK.foreachindex(uh) do i
+            σh[i] = stress(gh, uh, visc, i)
+        end
+        coarsegrain_convolve_coll!(gH, gh, σh_double1, σh, doublekernel)
+        convolution!(gh, doublekernel, uh_double, uh)
+        AK.foreachindex(uh) do i
+            σh_double2[i] = stress(gh, uh_double, visc, i)
+        end
+        @. τclass_m = σh_double1 - σh_double2
+
+        # Compute Smagorinsky stress
+        AK.foreachindex(uh_double) do i
+            δu = δ_stag(gh, uh_double, i)
+            sh[i] = abs(δu) * δu
+        end
+
+        θ2 = -dot(sh, τclass_m) / dot(sh, sh) / (Δ^2 + H^2)
+        θ2 = max(θ2, 0.0)
+        θ = sqrt(θ2)
+        @show θ
+
+        θ, copy(uh), copy(uh_double)
     end
 end
 export fit_smagcoeffs
