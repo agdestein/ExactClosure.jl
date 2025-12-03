@@ -25,38 +25,57 @@ plotdir = "$outdir/figures" |> mkpath
 
 setup = let
     L = 2π
-    nh = 2^5 * 3^6
-    nH = 2^5 .* 3 .^ (2:5)
+    nh = 2^5 * 3^5
+    nH = 2^5 .* 3 .^ (2:4)
     Δ_ratio = 2
     visc = 5e-4
     kp = 10
     A = 2 / kp / 3 / sqrt(π)
     a = sqrt(2 * A)
     tstop = 0.1
-    nsample = 1
+    nsample = 100
     (; L, nh, nH, Δ_ratio, visc, kp, a, tstop, nsample)
 end
 setup |> pairs
 
-dnsdata = create_dns(setup; cfl_factor = 0.3)
+dnsdata = create_dns(setup; cfl_factor = 0.3);
 
 # save_object("$outdir/burgers_dns.jld2", dnsdata)
 # dnsdata = load_object("$outdir/burgers_dns.jld2")
 
-smagcoeffs = fit_smagcoeffs(setup, dnsdata; lesfiltertype = :gaussian)
+smagcoeffs = fit_smagcoeffs(setup, dnsdata; lesfiltertype = :gaussian);
+
+getindex.(smagcoeffs, 1)
 
 let
-    i = 2
-    u, ubar = smagcoeffs[i][2], smagcoeffs[i][3]
     fig = Figure()
-    ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u", title = "DNS vs Filtered DNS")
-    lines!(ax, u; label = "DNS")
-    lines!(ax, ubar; label = "Filtered DNS")
-    axislegend(ax; position = :rt)
+    ax = Axis(fig[1, 1]; xlabel = "x")
+    for i = 1:3
+        θ, S, T = smagcoeffs[i]
+        j = 1
+        t = T[:, j]
+        lines!(ax, t)
+    end
     fig
 end
 
-
+let
+    θ, S, T = smagcoeffs[3]
+    Ustart, U = dnsdata
+    i = 1
+    u = U[:, i]
+    s = S[:, i]
+    t = T[:, i]
+    fig = Figure()
+    axu = Axis(fig[1, 1]; ylabel = "u", xticklabelsvisible = false)
+    lines!(axu, u)
+    axs = Axis(fig[2, 1]; xticklabelsvisible = false, ylabel = "s")
+    lines!(axs, s)
+    axt = Axis(fig[3, 1]; xlabel = "x", ylabel = "t")
+    lines!(axt, t)
+    linkxaxes!(axu, axs, axt)
+    fig
+end
 
 # save_object("$outdir/burgers_series.jld2", series)
 # series = load_object("$outdir/burgers_series.jld2")

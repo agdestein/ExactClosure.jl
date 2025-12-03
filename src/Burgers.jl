@@ -439,31 +439,41 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         uh_double = zeros(gh.n)
         sh = zeros(gh.n)
 
-        uh = U[:, 1]
+        Sh = zero(U)
+        Th = zero(U)
 
-        # Compute sub-filter stress
-        AK.foreachindex(uh) do i
-            σh[i] = stress(gh, uh, visc, i)
-        end
-        coarsegrain_convolve_coll!(gH, gh, σh_double1, σh, doublekernel)
-        convolution!(gh, doublekernel, uh_double, uh)
-        AK.foreachindex(uh) do i
-            σh_double2[i] = stress(gh, uh_double, visc, i)
-        end
-        @. τclass_m = σh_double1 - σh_double2
+        # uh = U[:, 1]
+        foreach(axes(U, 2)) do j
+            uh = view(U, :, j)
 
-        # Compute Smagorinsky stress
-        AK.foreachindex(uh_double) do i
-            δu = δ_stag(gh, uh_double, i)
-            sh[i] = abs(δu) * δu
+            # Compute sub-filter stress
+            AK.foreachindex(uh) do i
+                σh[i] = stress(gh, uh, visc, i)
+            end
+            coarsegrain_convolve_coll!(gH, gh, σh_double1, σh, doublekernel)
+            convolution!(gh, doublekernel, uh_double, uh)
+            AK.foreachindex(uh) do i
+                σh_double2[i] = stress(gh, uh_double, visc, i)
+                τclass_m[i] = σh_double1[i] - σh_double2[i]
+            end
+
+            # Compute Smagorinsky stress
+            AK.foreachindex(uh_double) do i
+                δu = δ_stag(gh, uh_double, i)
+                sh[i] = (Δ^2 + H^2) * abs(δu) * δu
+            end
+
+            Sh[:, j] = sh
+            Th[:, j] = τclass_m
         end
 
-        θ2 = -dot(sh, τclass_m) / dot(sh, sh) / (Δ^2 + H^2)
+        # @show dot(Sh, Th), dot(Sh, Sh)
+        θ2 = -dot(Sh, Th) / dot(Sh, Sh) # / (Δ^2 + H^2)
+        # θ2 = sum(.-Th ./ Sh) / prod(size(Sh))
         θ2 = max(θ2, 0.0)
         θ = sqrt(θ2)
-        @show θ
 
-        θ, copy(uh), copy(uh_double)
+        θ, Sh, Th
     end
 end
 export fit_smagcoeffs
