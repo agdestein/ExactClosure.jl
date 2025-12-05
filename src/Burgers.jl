@@ -433,6 +433,7 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         end
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
+        # Allocate arrays
         th = zeros(gh.n)
         σh = zeros(gh.n)
         σh_double1 = zeros(gh.n)
@@ -447,7 +448,6 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         D_Sh = zero(U)
         D_Th = zero(U)
 
-        # uh = U[:, 1]
         foreach(axes(U, 2)) do j
             uh = view(U, :, j)
 
@@ -481,6 +481,7 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
             D_Th[:, j] = D_th
         end
 
+        # Estimate θ
         θ2 = -dot(Sh, Th) / dot(Sh, Sh)
         # θ2 = dot(D_Sh, D_Th) / dot(D_Sh, D_Sh)
         # θ2 = sum(D_Th) / sum(D_Sh)
@@ -492,5 +493,64 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
     end
 end
 export fit_smagcoeffs
+
+function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
+    (; L, nh, nH, visc, tstop, Δ_ratio) = setup
+    map(enumerate(nH)) do (igrid, nH)
+        gh = Grid(L, nh)
+        gH = Grid(L, nH)
+        H = spacing(gH)
+        Δ = H * Δ_ratio
+        θ, _, _ = smagcoeffs[igrid]
+
+        # θ = 0.1
+        ustart, _ = dnsdata
+
+        # Filter kernels
+        fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
+        leskernel = if lesfiltertype == :tophat
+            lescomp = round(Int, Δ / spacing(gh))
+            R = div(lescomp, 2)
+            lescomp = 2 * R + 1 # Ensure odd
+            tophat_weights(gH, lescomp)
+        elseif lesfiltertype == :gaussian
+            gaussian_weights(gh, Δ)
+        end
+        doublekernel = build_doublekernel(fvmkernel, leskernel)
+
+        ubar = zeros(gH.n)
+        Ubar = zeros(gH.n, size(ustart, 2))
+
+        s = zeros(gH.n)
+
+        for j in axes(ustart, 2)
+            j == 1 || continue
+            coarsegrain_convolve_stag!(gH, gh, ubar, ustart[:, j], doublekernel)
+
+            @info "nH = $nH, sample $j of $(size(ustart, 2))"
+
+            cfl_factor = 0.003
+            t = 0.0
+            while t < tstop
+                dt = cfl_factor * cfl(gH, ubar, visc)
+                dt = min(dt, tstop - t) # Don't overstep
+                t += dt
+                AK.foreachindex(ubar) do i
+                    δu = δ_stag(gH, ubar, i)
+                    smag = -θ^2 * (Δ^2 + H^2) * abs(δu) * δu
+                    s[i] = stress(gH, ubar, visc, i) - smag
+                end
+                AK.synchronize(AK.get_backend(ubar))
+                AK.foreachindex(ubar) do i
+                    ubar[i] += dt * δ_coll(gH, s, i)
+                end
+                AK.synchronize(AK.get_backend(ubar))
+            end
+            Ubar[:, j] = ubar
+        end
+
+        Ubar
+    end
+end
 
 end

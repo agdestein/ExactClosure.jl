@@ -45,12 +45,29 @@ dnsdata = create_dns(setup; cfl_factor = 0.3);
 
 smagcoeffs = fit_smagcoeffs(setup, dnsdata; lesfiltertype = :gaussian);
 getindex.(smagcoeffs, 1)
+@. getindex(smagcoeffs, 1) * setup.L^2 / setup.nH^2 * (1 + setup.Δ_ratio^2)
 
 # 3-element Vector{Float64}:
 #  1.3078695085917662
 #  0.6567297859704491
 #  0.38678361976428427
 
+usmag = Burgers.solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype = :gaussian)
+
+let
+    j = 1
+    fig = Figure(; size = (400, 800))
+    for (i, nH) in enumerate(setup.nH)
+        gh = Grid(setup.L, setup.nh)
+        gH = Grid(setup.L, nH)
+        xh = points_stag(gh)
+        xH = points_stag(gH)
+        ax = Axis(fig[i, 1]; title = "N = $nH", xlabel = "x", ylabel = "u")
+        lines!(ax, xh, dnsdata[2][:, j]; label = "DNS")
+        lines!(ax, xH, usmag[i][:, j]; label = "Smagorinsky")
+    end
+    fig
+end
 
 let
     fig = Figure()
@@ -65,24 +82,36 @@ let
 end
 
 let
-    θ, S, T = smagcoeffs[1]
+    j = 1
+    θ, S, T = smagcoeffs[j]
     Ustart, U = dnsdata
     i = 1
     ustart = Ustart[:, i]
     u = U[:, i]
     s = S[:, i]
     t = T[:, i]
+    g = Grid(setup.L, setup.nh)
+    xs = points_stag(g)
+    xc = points_coll(g)
+    H = setup.L / setup.nH[j]
+    Δ = setup.Δ_ratio * H
+    fac = Δ^2 + H^2
+    C = 15
     fig = Figure()
     axu = Axis(fig[1, 1]; ylabel = "u", xticklabelsvisible = false)
-    lines!(axu, ustart)
-    lines!(axu, u)
+    lines!(axu, xs, ustart; color = Cycled(2), label = "u initial")
+    lines!(axu, xs, u; color = Cycled(1), label = "u final")
     axs = Axis(fig[2, 1]; xticklabelsvisible = false, ylabel = "s")
-    lines!(axs, s)
+    lines!(axs, xc, s; label = "Smagorinsky")
     axt = Axis(fig[3, 1]; xlabel = "x", ylabel = "t")
-    lines!(axt, t)
-    lines!(axt, -15s)
+    lines!(axt, xc, t; label = "True SFS")
+    lines!(axt, xc, -C * s; label = "Scaled Smagorinsky")
     linkxaxes!(axu, axs, axt)
-    xlims!(axt, 1800, 2000)
+    xlims!(axt, 2.0, 2.4)
+    axislegend(axu)
+    axislegend(axs)
+    axislegend(axt; position = :rb)
+    save("$(plotdir)/burgers_smagorinsky_fit_zoom.pdf", fig; backend = CairoMakie)
     fig
 end
 
