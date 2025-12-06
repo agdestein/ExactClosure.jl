@@ -410,7 +410,7 @@ function create_dns(setup; cfl_factor)
 end
 export create_dns
 
-function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
+function smagorinsky_fields(setup, dnsdata; lesfiltertype)
     (; L, nh, nH, visc, Δ_ratio) = setup
     map(nH) do nH
         gh = Grid(L, nh)
@@ -418,11 +418,13 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         _, U = dnsdata
         # U, _ = dnsdata
 
-        H = spacing(gh)
+        H = spacing(gH)
         Δ = H * Δ_ratio
+        comp = div(gh.n, gH.n)
+        a = div(comp, 2) # We have comp = 2a + 1
 
         # Filter kernels
-        fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
+        fvmkernel = tophat_weights(gH, comp)
         leskernel = if lesfiltertype == :tophat
             lescomp = round(Int, Δ / spacing(gh))
             R = div(lescomp, 2)
@@ -434,20 +436,34 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
         # Allocate arrays
-        th = zeros(gh.n)
         σh = zeros(gh.n)
         σh_double1 = zeros(gh.n)
         σh_double2 = zeros(gh.n)
         uh_double = zeros(gh.n)
+
         sh = zeros(gh.n)
+        th = zeros(gh.n)
         D_sh = zeros(gh.n)
         D_th = zeros(gh.n)
+
+        sH = zeros(gh.n)
+        tH = zeros(gh.n)
+        D_sH = zeros(gh.n)
+        D_tH = zeros(gh.n)
 
         Sh = zero(U)
         Th = zero(U)
         D_Sh = zero(U)
         D_Th = zero(U)
 
+        SH = zero(U)
+        TH = zero(U)
+        D_SH = zero(U)
+        D_TH = zero(U)
+
+        Uh_double = zero(U)
+
+        # Compute classical sub-filter stress (on DNS grid)
         foreach(axes(U, 2)) do j
             uh = view(U, :, j)
 
@@ -471,7 +487,7 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
             # Compute dissipation coefficients
             AK.foreachindex(uh_double) do i
                 δu = δ_stag(gh, uh_double, i)
-                D_sh[i] = -(Δ^2 + H^2) * sh[i] * δu # Smag
+                D_sh[i] = sh[i] * δu # Smag
                 D_th[i] = th[i] * δu # True
             end
 
@@ -479,20 +495,55 @@ function fit_smagcoeffs(setup, dnsdata; lesfiltertype)
             Th[:, j] = th
             D_Sh[:, j] = D_sh
             D_Th[:, j] = D_th
+            Uh_double[:, j] = uh_double
         end
 
-        # Estimate θ
-        θ2 = -dot(Sh, Th) / dot(Sh, Sh)
-        # θ2 = dot(D_Sh, D_Th) / dot(D_Sh, D_Sh)
-        # θ2 = sum(D_Th) / sum(D_Sh)
-        @show θ2
-        θ2 = max(θ2, 0.0)
-        θ = sqrt(θ2)
+        # Compute discretization-consistent sub-filter stress (on DNS grid)
+        foreach(axes(U, 2)) do j
+            uh = view(U, :, j)
 
-        θ, Sh, Th
+            # Compute sub-filter stress
+            AK.foreachindex(uh) do i
+                σh[i] = stress(gh, uh, visc, i)
+            end
+            convolution!(gh, leskernel, σh_double1, σh)
+            convolution!(gh, doublekernel, uh_double, uh)
+            AK.foreachindex(uh) do i
+                # Coarse-grid stress (on the fine grid)
+                uleft = uh_double[i-a-1|>gh]
+                uright = uh_double[i+a|>gh]
+                σh_double2[i] =
+                    -(uleft + uright)^2 / 8 + visc * (uright - uleft) / spacing(gH)
+                tH[i] = σh_double1[i] - σh_double2[i]
+            end
+
+            # Compute Smagorinsky stress
+            AK.foreachindex(uh_double) do i
+                # Coarse-grid derivative (on fine grid)
+                uleft = uh_double[i-a-1|>gh]
+                uright = uh_double[i+a|>gh]
+                δu = (uright - uleft) / spacing(gH)
+                sH[i] = -(Δ^2 + H^2) * abs(δu) * δu
+            end
+
+            # Compute dissipation coefficients
+            AK.foreachindex(uh_double) do i
+                uleft = uh_double[i-a-1|>gh]
+                uright = uh_double[i+a|>gh]
+                δu = (uright - uleft) / spacing(gH)
+                D_sH[i] = sH[i] * δu # Smag
+                D_tH[i] = tH[i] * δu # True
+            end
+
+            SH[:, j] = sH
+            TH[:, j] = tH
+            D_SH[:, j] = D_sH
+            D_TH[:, j] = D_tH
+        end
+
+        (; Sh, Th, D_Sh, D_Th, SH, TH, D_SH, D_TH, Ubar = Uh_double)
     end
 end
-export fit_smagcoeffs
 
 function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
     (; L, nh, nH, visc, tstop, Δ_ratio) = setup
@@ -501,9 +552,9 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
         gH = Grid(L, nH)
         H = spacing(gH)
         Δ = H * Δ_ratio
-        θ, _, _ = smagcoeffs[igrid]
+        θ = smagcoeffs[igrid]
+        C = θ^2 * (Δ^2 + H^2)
 
-        # θ = 0.1
         ustart, _ = dnsdata
 
         # Filter kernels
@@ -521,35 +572,66 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
         ubar = zeros(gH.n)
         Ubar = zeros(gH.n, size(ustart, 2))
 
+        ubar0 = zero(ubar)
+        k1 = zero(ubar)
+        k2 = zero(ubar)
+        k3 = zero(ubar)
+        k4 = zero(ubar)
+
         s = zeros(gH.n)
 
         for j in axes(ustart, 2)
-            j == 1 || continue
             coarsegrain_convolve_stag!(gH, gh, ubar, ustart[:, j], doublekernel)
 
             @info "nH = $nH, sample $j of $(size(ustart, 2))"
 
-            cfl_factor = 0.003
+            cfl_factor = 0.3
             t = 0.0
             while t < tstop
                 dt = cfl_factor * cfl(gH, ubar, visc)
                 dt = min(dt, tstop - t) # Don't overstep
                 t += dt
+
+                # # Forward Euler step
+                # smagorinsky_rhs!(k1, u, s, gH, visc, C)
+                # AK.foreachindex(ubar) do i
+                #     ubar[i] += dt * k1[i]
+                # end
+
+                # RK4 step
+                copyto!(ubar0, ubar)
+                smagorinsky_rhs!(k1, ubar, s, gH, visc, C)
                 AK.foreachindex(ubar) do i
-                    δu = δ_stag(gH, ubar, i)
-                    smag = -θ^2 * (Δ^2 + H^2) * abs(δu) * δu
-                    s[i] = stress(gH, ubar, visc, i) - smag
+                    ubar[i] = ubar0[i] + dt / 2 * k1[i]
                 end
-                AK.synchronize(AK.get_backend(ubar))
+                smagorinsky_rhs!(k2, ubar, s, gH, visc, C)
                 AK.foreachindex(ubar) do i
-                    ubar[i] += dt * δ_coll(gH, s, i)
+                    ubar[i] = ubar0[i] + dt / 2 * k2[i]
                 end
-                AK.synchronize(AK.get_backend(ubar))
+                smagorinsky_rhs!(k3, ubar, s, gH, visc, C)
+                AK.foreachindex(ubar) do i
+                    ubar[i] = ubar0[i] + dt * k3[i]
+                end
+                smagorinsky_rhs!(k4, ubar, s, gH, visc, C)
+                AK.foreachindex(ubar) do i
+                    ubar[i] = ubar0[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
+                end
             end
             Ubar[:, j] = ubar
         end
 
         Ubar
+    end
+end
+
+function smagorinsky_rhs!(du, u, s, g, visc, C)
+    AK.foreachindex(u) do i
+        δu = δ_stag(g, u, i)
+        smag = -C * abs(δu) * δu
+        s[i] = stress(g, u, visc, i) - smag
+    end
+    AK.foreachindex(u) do i
+        du[i] = δ_coll(g, s, i)
     end
 end
 
