@@ -9,6 +9,7 @@ if false
 end
 
 using CairoMakie
+using CUDA
 using ExactClosure
 using ExactClosure.Burgers
 using FFTW
@@ -17,7 +18,8 @@ using KernelDensity
 using LinearAlgebra
 using Random
 using Statistics
-using WGLMakie
+# using WGLMakie
+using GLMakie
 
 # outdir = "~/Projects/StructuralErrorPaper" |> expanduser
 outdir = joinpath(@__DIR__, "output", "Burgers") |> mkpath
@@ -25,16 +27,16 @@ plotdir = "$outdir/figures" |> mkpath
 
 setup = let
     L = 2π
-    nh = 3^8
-    nH = 3 .^ (5:7)
+    nh = 100 * 3^3 * 5
+    nH = 100 .* 3 .^ (1:3)
     Δ_ratio = 2
     visc = 5e-4
-    kp = 10
-    A = 2 / kp / 3 / sqrt(π)
-    a = sqrt(2 * A)
+    kpeak = 10
+    initialenergy = 2.0
     tstop = 0.1
     nsample = 1000
-    (; L, nh, nH, Δ_ratio, visc, kp, a, tstop, nsample)
+    backend = CUDA.functional() ? CUDABackend() : Burgers.AK.KernelAbstractions.CPU()
+    (; L, nh, nH, Δ_ratio, visc, kpeak, initialenergy, tstop, nsample, backend)
 end
 setup |> pairs
 
@@ -285,11 +287,13 @@ let
     fig
 end
 
+using CUDA
+
 # Plot Burgers solution
 let
-    (; L, nh, kp, a, visc, tstop) = setup
+    (; L, nh, kpeak, initialenergy, visc, tstop) = setup
     g = Grid(L, nh)
-    ustart = randomfield(Xoshiro(0), g, kp, a)
+    ustart = randomfield(Xoshiro(0), g, kpeak, initialenergy)
     uh = copy(ustart)
     sh = zero(ustart)
     t = 0.0
@@ -302,8 +306,8 @@ let
     xh = points_stag(g)
     fig = Figure(; size = (400, 340))
     ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u")
-    lines!(ax, xh, ustart; label = "Initial")
-    lines!(ax, xh, uh; label = "Final")
+    lines!(ax, xh, ustart |> Array; label = "Initial")
+    lines!(ax, xh, uh |> Array; label = "Final")
     Legend(
         fig[0, 1],
         ax;
@@ -313,12 +317,14 @@ let
     )
     rowgap!(fig.layout, 5)
     save("$plotdir/burgers_solution.pdf", fig; backend = CairoMakie)
+    # @show sum(abs2, ustart) / 2 / nh sum(abs2, uh) / 2 / nh
     fig
 end
 
 # DNS-aided LES
 series = map(setup.nH) do nH
-    (; L, nh, Δ_ratio, visc, kp, a, tstop, nsample) = setup
+    (; L, nh, Δ_ratio, visc, kpeak, initialenergy, tstop, nsample, backend) = setup
+    # backend = Burgers.AK.KernelAbstractions.CPU()
     gh = Grid(L, nh)
     gH = Grid(L, nH)
     Δ = spacing(gH) * Δ_ratio
@@ -334,7 +340,7 @@ series = map(setup.nH) do nH
     for i = 1:nsample
         @info "N = $nH, sample $i of $nsample"
         rng = Xoshiro(i)
-        ustart = randomfield(rng, gh, kp, a)
+        ustart = randomfield(rng, gh, kpeak, initialenergy) |> adapt(backend)
         sols = Burgers.dns_aided_les(
             ustart,
             gh,
@@ -477,6 +483,7 @@ let
         nbanks = 2,
         framevisible = false,
     )
+    linkaxes!(axes...)
     rowgap!(fig.layout, 10)
     save("$(plotdir)/burgers_spectrum.pdf", fig; backend = CairoMakie)
     fig
@@ -484,50 +491,6 @@ end
 
 # Compute dissipation coefficients
 diss = compute_dissipation(series, setup, :gaussian)
-
-# Plot dissipation coefficient density
-let
-    models = [
-        (; label = "No-model", sym = :nomodel),
-        (; label = "Classic", sym = :classic),
-        (; label = "Swap (ours)", sym = :swapfil),
-    ]
-    fig = Figure(; size = (400, 800))
-    for (i, diss) in diss |> enumerate
-        ax = Axis(
-            fig[i, 1];
-            xticks = (eachindex(models), getindex.(models, :label)),
-            xticksvisible = i == 3,
-            xticklabelsvisible = i == 3,
-            ylabel = "Dissipation",
-        )
-        for (i, model) in enumerate(models)
-            d = diss[model.sym]
-            boxplot!(
-                ax,
-                fill(i, length(d)),
-                d;
-                show_outliers = false,
-                whiskerwidth = 0.2,
-                orientation = :vertical,
-                label = model[1],
-                color = Cycled(i + 1),
-            )
-        end
-        Label(
-            fig[i, 1],
-            "N = $(setup.nH[i])";
-            font = :bold,
-            padding = (10, 0, 0, 10),
-            halign = :left,
-            valign = :top,
-            tellwidth = false,
-            tellheight = false,
-        )
-    end
-    save("$(plotdir)/burgers_dissipation.pdf", fig; backend = CairoMakie)
-    fig
-end
 
 # Plot dissipation coefficient density
 let
@@ -553,8 +516,8 @@ let
             ylabel = "Density",
             yscale = log10,
         )
-        xlims!(ax, -0.5 * a, 0.5 * a)
-        ylims!(ax, 1e-4, 1.0e-1)
+        xlims!(ax, -0.3 * a, 0.5 * a)
+        ylims!(ax, 1e-4, 4e-1)
         for (j, model) in enumerate(models)
             d = diss[model.sym] / (Δ^2 + Δx^2)
             s = median(d)

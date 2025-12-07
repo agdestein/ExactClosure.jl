@@ -18,6 +18,7 @@ export Grid,
     dissipation!,
     spacing
 
+using Adapt
 using FFTW
 using LinearAlgebra
 using Random
@@ -40,24 +41,59 @@ points_stag(g) = range(0, g.L, g.n + 1)[2:end]
 points_coll(g) = range(0, g.L, g.n + 1)[2:end] .- spacing(g) / 2
 
 # Finite difference
-@inline δ_stag(g, u, i) = (u[i|>g] - u[i-1|>g]) / spacing(g)
-@inline δ_coll(g, p, i) = (p[i+1|>g] - p[i|>g]) / spacing(g)
+@inline @inbounds δ_stag(g, u, i) = (u[i|>g] - u[i-1|>g]) / spacing(g)
+@inline @inbounds δ_coll(g, p, i) = (p[i+1|>g] - p[i|>g]) / spacing(g)
 
-@inline stress(g, u, visc, i) = -(u[i-1|>g] + u[i])^2 / 8 + visc * δ_stag(g, u, i)
+@inline @inbounds stress(g, u, visc, i) = -(u[i-1|>g] + u[i|>g])^2 / 8 + visc * δ_stag(g, u, i)
 
 # CFL number
 cfl(g, u, visc) = min(spacing(g) / maximum(abs, u), spacing(g)^2 / visc)
 
+rhs!(du, u, visc, g) =
+    AK.foreachindex(u) do i
+        @inline
+        sleft  = stress(g, u, visc, i)
+        sright = stress(g, u, visc, i + 1)
+        du[i] = (sright - sleft) / spacing(g)
+    end
+
 "Perform one time step (inplace)."
 function timestep!(g, u, s, visc, dt)
     AK.foreachindex(u) do i
-        s[i] = stress(g, u, visc, i)
+        @inline
+        @inbounds s[i] = stress(g, u, visc, i)
     end
-    AK.synchronize(AK.get_backend(u))
     AK.foreachindex(u) do i
-        u[i] += dt * δ_coll(g, s, i)
+        @inline
+        @inbounds u[i] += dt * δ_coll(g, s, i)
     end
-    AK.synchronize(AK.get_backend(u))
+end
+
+function rk4_timestep!(g, u, uold, k1, k2, k3, k4, visc, dt)
+
+    # RK4 step
+    copyto!(uold, u)
+    rhs!(k1, u, visc, g)
+    AK.foreachindex(u) do i
+        @inline
+        @inbounds u[i] = uold[i] + dt / 2 * k1[i]
+    end
+    rhs!(k2, u, visc, g)
+    AK.foreachindex(u) do i
+        @inline
+        @inbounds u[i] = uold[i] + dt / 2 * k2[i]
+    end
+    rhs!(k3, u, visc, g)
+    AK.foreachindex(u) do i
+        @inline
+        @inbounds u[i] = uold[i] + dt * k3[i]
+    end
+    rhs!(k4, u, visc, g)
+    AK.foreachindex(u) do i
+        @inline
+        @inbounds u[i] = uold[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
+    end
+
 end
 
 # Filters
@@ -85,6 +121,7 @@ export tophat_weights
 function convolution!(g, kernel, ubar, u)
     R, w = kernel
     AK.foreachindex(ubar) do i
+        @inline
         s = zero(eltype(u))
         for r = (-R):R
             @inbounds s += w[r+R+1] * u[i+r|>g]
@@ -100,6 +137,7 @@ function coarsegrain_convolve_stag!(gH, gh, uH, uh, kernel)
     comp = div(gh.n, gH.n)
     R, w = kernel
     AK.foreachindex(uH) do i
+        @inline
         s = zero(eltype(uH))
         for r = (-R):R
             @inbounds s += w[R+1+r] * uh[i*comp+r|>gh]
@@ -116,6 +154,7 @@ function coarsegrain_convolve_coll!(gH, gh, pH, ph, kernel)
     a = div(comp, 2)
     R, w = kernel
     AK.foreachindex(pH) do i
+        @inline
         s = zero(eltype(pH))
         for r = (-R):R
             @inbounds s += w[R+1+r] * ph[i*comp-a+r|>gh]
@@ -132,6 +171,7 @@ function volavg_stag!(gH, gh, uH, uh)
     R = div(comp, 2)
     @assert 2 * R + 1 == comp "Use odd compression."
     AK.foreachindex(uH) do i
+        @inline
         s = zero(eltype(uH))
         for r = (-R):R
             @inbounds s += uh[i*comp+r|>gh] / comp
@@ -145,6 +185,7 @@ end
 function volavg_coll!(gH, gh, pH, ph)
     comp = div(gh.n, gH.n)
     AK.foreachindex(pH) do i
+        @inline
         s = zero(eltype(pH))
         for j = 1:comp
             @inbounds s += ph[(i-1)*comp+j] / comp
@@ -158,6 +199,7 @@ end
 function suravg_stag!(gH, gh, uH, uh)
     comp = div(gh.n, gH.n)
     AK.foreachindex(uH) do i
+        @inline
         @inbounds uH[i] = uh[i*comp]
     end
     AK.synchronize(AK.get_backend(uH))
@@ -169,16 +211,19 @@ function suravg_coll!(gH, gh, pH, ph)
     R = div(comp, 2)
     @assert 2 * R + 1 == comp "Use odd compression."
     AK.foreachindex(pH) do i
+        @inline
         @inbounds pH[i] = ph[i*comp-R]
     end
     AK.synchronize(AK.get_backend(pH))
     pH
 end
 
-function randomfield(rng, g, kpeak, amp)
+function randomfield(rng, g, kpeak, totalenergy)
     k = 0:div(g.n, 2)
-    c = @. amp * (k / kpeak)^2 * exp(-(k / kpeak)^2 / 2 + 2π * im * rand(rng))
-    irfft(c * g.n, g.n)
+    c = @. (k / kpeak)^4 * exp(-2 * (k / kpeak)^2 + 2π * im * rand(rng))
+    u = irfft(c * g.n, g.n)
+    etot = sum(abs2, u) / 2 * spacing(g)
+    sqrt(totalenergy / etot) * u
 end
 
 dissipation(g, u, s) =
@@ -189,6 +234,7 @@ dissipation(g, u, s) =
 
 function dissipation!(g, d, u, s)
     AK.foreachindex(d) do i
+        @inline
         @inbounds d[i] = s[i] * δ_stag(g, u, i)
     end
     AK.synchronize(AK.get_backend(d))
@@ -214,6 +260,7 @@ end
 
 # Compare closure formulations
 function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertype)
+    backend = AK.get_backend(ustart)
     uh = ustart
 
     # Filter kernels
@@ -228,8 +275,13 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
     end
     doublekernel = build_doublekernel(fvmkernel, leskernel)
 
+    # Put on device
+    fvmkernel = fvmkernel |> adapt(backend)
+    leskernel = leskernel |> adapt(backend)
+    doublekernel = doublekernel |> adapt(backend)
+
     # Initial double-filtered state
-    uH = zeros(gH.n)
+    uH = zeros(gH.n) |> adapt(backend)
     coarsegrain_convolve_stag!(gH, gh, uH, uh, doublekernel)
 
     # Allocate arrays
@@ -241,15 +293,15 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
         class_p = copy(uH), # bar(r(u)) - rh(bar(u))
         swapfil = copy(uH),
     )
-    su = zeros(gh.n)
-    fsu = zeros(gH.n)
-    vsu = zeros(gH.n)
-    vu = zeros(gH.n)
-    VU = zeros(gh.n) # Same as vu, but on DNS grid
-    σ_nomodel = zeros(gH.n)
-    σ_class_m = zeros(gH.n)
-    σ_class_p = zeros(gH.n)
-    σ_swapfil = zeros(gH.n)
+    su = similar(uh)
+    fsu = similar(uH)
+    vsu = similar(uH)
+    vu = similar(uH)
+    VU = similar(uh) # Same as vu, but on DNS grid
+    σ_nomodel = similar(uH)
+    σ_class_m = similar(uH)
+    σ_class_p = similar(uH)
+    σ_swapfil = similar(uH)
 
     # Time stepping
     t = 0.0
@@ -260,6 +312,7 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
 
         # DNS stress
         AK.foreachindex(su) do i
+            @inline
             @inbounds su[i] = stress(gh, u.dns_ref, visc, i)
         end
         AK.synchronize(AK.get_backend(su))
@@ -276,6 +329,7 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
         comp = div(gh.n, gH.n)
         a = div(comp, 2)
         AK.foreachindex(uH) do i
+            @inline
             @inbounds svu = stress(gH, vu, visc, i)
             @inbounds sVU = stress(gh, VU, visc, i * comp - a)
             @inbounds σ_nomodel[i] = stress(gH, u.nomodel, visc, i)
@@ -286,19 +340,13 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
         AK.synchronize(AK.get_backend(uH))
 
         # DNS time step
-        AK.foreachindex(uh) do i
-            @inbounds u.dns_ref[i] += dt * δ_coll(gh, su, i)
-        end
-        AK.synchronize(AK.get_backend(uh))
+        stepfromstress!(u.dns_ref, su, gh, dt)
 
         # LES time steps
-        AK.foreachindex(uH) do i
-            @inbounds u.nomodel[i] += dt * δ_coll(gH, σ_nomodel, i)
-            @inbounds u.class_m[i] += dt * δ_coll(gH, σ_class_m, i)
-            @inbounds u.class_p[i] += dt * δ_coll(gH, σ_class_p, i)
-            @inbounds u.swapfil[i] += dt * δ_coll(gH, σ_swapfil, i)
-        end
-        AK.synchronize(AK.get_backend(uh))
+        stepfromstress!(u.nomodel, σ_nomodel, gH, dt)
+        stepfromstress!(u.class_m, σ_class_m, gH, dt)
+        stepfromstress!(u.class_p, σ_class_p, gH, dt)
+        stepfromstress!(u.swapfil, σ_swapfil, gH, dt)
 
         # Time step
         t += dt
@@ -308,6 +356,14 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
     coarsegrain_convolve_stag!(gH, gh, u.dns_fil, u.dns_ref, doublekernel)
 
     u
+end
+
+function stepfromstress!(u, s, g, dt)
+    AK.foreachindex(u) do i
+        @inline
+        @inbounds u[i] += dt * δ_coll(g, s, i)
+    end
+    AK.synchronize(AK.get_backend(u))
 end
 
 function compute_dissipation(series, setup, lesfiltertype)
@@ -344,6 +400,7 @@ function compute_dissipation(series, setup, lesfiltertype)
         d = stack(eachcol(fields.dns_ref.u)) do uh
             # DNS stress
             AK.foreachindex(su) do i
+                @inline
                 @inbounds su[i] = stress(gh, uh, visc, i)
             end
             AK.synchronize(AK.get_backend(su))
@@ -360,6 +417,7 @@ function compute_dissipation(series, setup, lesfiltertype)
             comp = div(gh.n, gH.n)
             a = div(comp, 2)
             AK.foreachindex(vu) do i
+                @inline
                 @inbounds svu = stress(gH, vu, visc, i)
                 @inbounds sVU = stress(gh, VU, visc, i * comp - a)
                 @inbounds σ_class_m[i] = vsu[i] - sVU
@@ -387,20 +445,22 @@ end
 export compute_dissipation
 
 function create_dns(setup; cfl_factor)
-    (; L, nh, kp, a, visc, tstop, nsample) = setup
+    (; L, nh, kpeak, initialenergy, visc, tstop, nsample) = setup
     g = Grid(L, nh)
     Ustart = zeros(nh, nsample)
     U = zeros(nh, nsample)
     for i = 1:nsample
         @info "DNS sample $i of $nsample"
-        ustart = randomfield(Xoshiro(i), g, kp, a)
+        ustart = randomfield(Xoshiro(i), g, kpeak, initialenergy)
         u = copy(ustart)
-        s = zero(ustart)
+        s = zero(u)
+        # uold, k1, k2, k3, k4 = zero(u), zero(u), zero(u), zero(u), zero(u)
         t = 0.0
         while t < tstop
             dt = cfl_factor * cfl(g, u, visc) # Propose timestep
             dt = min(dt, tstop - t) # Don't overstep
             timestep!(g, u, s, visc, dt) # Perform timestep
+            # rk4_timestep!(g, u, uold, k1, k2, k3, k4, visc, dt)
             t += dt
         end
         Ustart[:, i] = ustart
@@ -469,23 +529,27 @@ function smagorinsky_fields(setup, dnsdata; lesfiltertype)
 
             # Compute sub-filter stress
             AK.foreachindex(uh) do i
+                @inline
                 σh[i] = stress(gh, uh, visc, i)
             end
             convolution!(gh, doublekernel, σh_double1, σh)
             convolution!(gh, doublekernel, uh_double, uh)
             AK.foreachindex(uh) do i
+                @inline
                 σh_double2[i] = stress(gh, uh_double, visc, i)
                 th[i] = σh_double1[i] - σh_double2[i]
             end
 
             # Compute Smagorinsky stress
             AK.foreachindex(uh_double) do i
+                @inline
                 δu = δ_stag(gh, uh_double, i)
                 sh[i] = -(Δ^2 + H^2) * abs(δu) * δu
             end
 
             # Compute dissipation coefficients
             AK.foreachindex(uh_double) do i
+                @inline
                 δu = δ_stag(gh, uh_double, i)
                 D_sh[i] = sh[i] * δu # Smag
                 D_th[i] = th[i] * δu # True
@@ -504,11 +568,13 @@ function smagorinsky_fields(setup, dnsdata; lesfiltertype)
 
             # Compute sub-filter stress
             AK.foreachindex(uh) do i
+                @inline
                 σh[i] = stress(gh, uh, visc, i)
             end
             convolution!(gh, leskernel, σh_double1, σh)
             convolution!(gh, doublekernel, uh_double, uh)
             AK.foreachindex(uh) do i
+                @inline
                 # Coarse-grid stress (on the fine grid)
                 uleft = uh_double[i-a-1|>gh]
                 uright = uh_double[i+a|>gh]
@@ -519,6 +585,7 @@ function smagorinsky_fields(setup, dnsdata; lesfiltertype)
 
             # Compute Smagorinsky stress
             AK.foreachindex(uh_double) do i
+                @inline
                 # Coarse-grid derivative (on fine grid)
                 uleft = uh_double[i-a-1|>gh]
                 uright = uh_double[i+a|>gh]
@@ -528,6 +595,7 @@ function smagorinsky_fields(setup, dnsdata; lesfiltertype)
 
             # Compute dissipation coefficients
             AK.foreachindex(uh_double) do i
+                @inline
                 uleft = uh_double[i-a-1|>gh]
                 uright = uh_double[i+a|>gh]
                 δu = (uright - uleft) / spacing(gH)
@@ -595,6 +663,7 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
                 # # Forward Euler step
                 # smagorinsky_rhs!(k1, u, s, gH, visc, C)
                 # AK.foreachindex(ubar) do i
+                #     @inline
                 #     ubar[i] += dt * k1[i]
                 # end
 
@@ -602,20 +671,25 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
                 copyto!(ubar0, ubar)
                 smagorinsky_rhs!(k1, ubar, s, gH, visc, C)
                 AK.foreachindex(ubar) do i
+                    @inline
                     ubar[i] = ubar0[i] + dt / 2 * k1[i]
                 end
                 smagorinsky_rhs!(k2, ubar, s, gH, visc, C)
                 AK.foreachindex(ubar) do i
+                    @inline
                     ubar[i] = ubar0[i] + dt / 2 * k2[i]
                 end
                 smagorinsky_rhs!(k3, ubar, s, gH, visc, C)
                 AK.foreachindex(ubar) do i
+                    @inline
                     ubar[i] = ubar0[i] + dt * k3[i]
                 end
                 smagorinsky_rhs!(k4, ubar, s, gH, visc, C)
                 AK.foreachindex(ubar) do i
+                    @inline
                     ubar[i] = ubar0[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
                 end
+
             end
             Ubar[:, j] = ubar
         end
@@ -626,11 +700,13 @@ end
 
 function smagorinsky_rhs!(du, u, s, g, visc, C)
     AK.foreachindex(u) do i
+        @inline
         δu = δ_stag(g, u, i)
         smag = -C * abs(δu) * δu
         s[i] = stress(g, u, visc, i) - smag
     end
     AK.foreachindex(u) do i
+        @inline
         du[i] = δ_coll(g, s, i)
     end
 end

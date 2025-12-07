@@ -26,16 +26,15 @@ plotdir = "$outdir/figures" |> mkpath
 
 setup = let
     L = 2π
-    nh = 100 * 3^5
+    nh = 100 * 3^3 * 5
     nH = 100 .* 3 .^ (1:3)
     Δ_ratio = 2
     visc = 5e-4
-    kp = 10
-    A = 2 / kp / 3 / sqrt(π)
-    a = sqrt(2 * A)
+    kpeak = 10
+    initialenergy = 2.0
     tstop = 0.1
     nsample = 1000
-    (; L, nh, nH, Δ_ratio, visc, kp, a, tstop, nsample)
+    (; L, nh, nH, Δ_ratio, visc, kpeak, initialenergy, tstop, nsample)
 end
 setup |> pairs
 
@@ -104,7 +103,7 @@ end
 # Plot solution, Smagorinsky SFS, and true SFS
 let
     j = 1
-    (; Sh, Th, SH, TH) = fields[j]
+    (; Sh, Th, SH, TH, Ubar) = fields[j]
     Ustart, U = dnsdata
     i = 1
     ustart = Ustart[:, i]
@@ -123,6 +122,16 @@ let
     axu = Axis(fig[1, 1]; ylabel = "Velocity", xticklabelsvisible = false)
     lines!(axu, xs, ustart; color = Cycled(2), label = "Initial DNS")
     lines!(axu, xs, u; color = Cycled(1), label = "Final DNS")
+    scatterlines!(axu,
+        points_stag(Grid(setup.L, setup.nH[j])),
+        # u_classic[j][:, i];
+        u_swapfil[j][:, i];
+        color = Cycled(3), label = "Smag",
+    )
+    lines!(axu,
+           xs,
+           Ubar[:, i]; color = Cycled(3), label = "Filtered",
+    )
     axislegend(axu)
     #
     axth = Axis(fig[2, 1]; xticklabelsvisible = false, ylabel = "Flux")
@@ -137,10 +146,15 @@ let
     axislegend(axtH; position = :rb)
     #
     linkxaxes!(axu, axth, axtH)
-    if true
+    linkyaxes!(axth, axtH)
+    if false
         save("$(plotdir)/burgers_smagorinsky.pdf", fig; backend = CairoMakie)
     else
-        xlims!(axtH, 2.0, 2.4)
+        # xlims!(axtH, 2.0, 2.4)
+        # xlims!(axtH, 2.7, 3.2)
+        xlims!(axtH, 3.51, 3.7)
+        RR = 20 * (Δ^2 + H^2)
+        # ylims!(axtH, -RR, RR / 5)
         save("$(plotdir)/burgers_smagorinsky_fit_zoom.pdf", fig; backend = CairoMakie)
     end
     fig
@@ -264,8 +278,8 @@ let
             xticklabelsvisible = islast,
             xlabelvisible = islast,
         )
-        xlims!(ax, 7e-1, 8e3)
-        ylims!(ax, 1e-10, 5e-2)
+        xlims!(ax, 7e-1, 10e3)
+        ylims!(ax, 1e-11, 1e-1)
         tip = specs.classic
         # o = (22, 70, 210)[i]
         o = (72, 200, 600)[i]
@@ -293,6 +307,10 @@ let
             lines!(ax, k[ii], e[ii]; label, styles[key]...)
             lines!(ax_zoom, k, e; styles[key]...)
         end
+        # kkol = logrange(2e0, 2e4, 100)
+        # ekol = map(k -> 1.8e0 * k^-2, kkol)
+        # lines!(ax, kkol, ekol; color = :black, linestyle = :dash)
+        # lines!(ax_zoom, kkol, ekol; color = :black, linestyle = :dash)
         Label(
             f[i, 1],
             "N = $nH";

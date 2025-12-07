@@ -8,7 +8,9 @@ if false
     using .ExactClosure
 end
 
+using Adapt
 using CairoMakie
+using CUDA
 using ExactClosure
 using ExactClosure.Burgers
 using FFTW
@@ -17,7 +19,8 @@ using KernelDensity
 using LinearAlgebra
 using Random
 using Statistics
-using WGLMakie
+# using WGLMakie
+using GLMakie
 
 # outdir = "~/Projects/StructuralErrorPaper" |> expanduser
 outdir = joinpath(@__DIR__, "output", "Burgers") |> mkpath
@@ -25,16 +28,16 @@ plotdir = "$outdir/figures" |> mkpath
 
 setup = let
     L = 2π
-    nh = 3^8
-    nH = [3^5, 3^6, 3^7]
-    visc = 5e-4
-    kp = 10
-    A = 2 / kp / 3 / sqrt(π)
-    a = sqrt(2 * A)
-    tstop = 0.1
-    nsample = 1
+    nh = 100 * 3^3 * 5
+    nH = 100 .* 3 .^ (1:3)
     Δ_scalers = [0, 1, 2, 4, 8, 16, 32, 64]
-    (; L, nh, nH, visc, kp, a, tstop, nsample, Δ_scalers)
+    visc = 5e-4
+    kpeak = 10
+    initialenergy = 2.0
+    tstop = 0.1
+    nsample = 10
+    backend = CUDA.functional() ? CUDABackend() : Burgers.AK.KernelAbstractions.CPU()
+    (; L, nh, nH, Δ_scalers, visc, kpeak, initialenergy, tstop, nsample, backend)
 end
 setup |> pairs
 
@@ -42,7 +45,7 @@ setup |> pairs
 series =
     map([:tophat, :gaussian]) do lesfiltertype
         lesfiltertype => map(setup.nH) do nH
-            (; L, nh, visc, kp, a, tstop, nsample, Δ_scalers) = setup
+            (; L, nh, visc, kpeak, initialenergy, tstop, nsample, Δ_scalers, backend) = setup
             gh = Grid(L, nh)
             gH = Grid(L, nH)
             widths = Δ_scalers * spacing(gH)
@@ -54,12 +57,11 @@ series =
                 class_m = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic"),
                 class_p = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic+"),
                 swapfil = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Swap (ours)"),
-            )
-            # Threads.@threads for (i, j) in Iterators.product(1:nsample, eachindex(widths)) |> collect
+            ) |> adapt(backend)
             for (i, j) in Iterators.product(1:nsample, eachindex(widths)) |> collect
                 @info "Filter: $(lesfiltertype), N = $nH, sample = $i, Δ/h = $(Δ_scalers[j])"
                 rng = Xoshiro(i)
-                ustart = randomfield(rng, gh, kp, a)
+                ustart = randomfield(rng, gh, kpeak, initialenergy) |> adapt(backend)
                 sols = Burgers.dns_aided_les(
                     ustart,
                     gh,
@@ -74,7 +76,7 @@ series =
                     copyto!(view(fields[key].u, :, i, j), sols[key])
                 end
             end
-            (; nH, fields)
+            (; nH, fields) |> adapt(Burgers.AK.KernelAbstractions.CPU())
         end
     end |> NamedTuple;
 
@@ -141,6 +143,7 @@ let
                 color = Cycled(j)
                 label = errseries.fields[key].label
                 key != :nomodel && scatterlines!(ax_lin, e; label, color)
+                # scatterlines!(ax_lin, e; label, color)
                 scatterlines!(ax_log, e; label, color)
             end
             # ii = 2:8
