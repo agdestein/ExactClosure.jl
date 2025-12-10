@@ -122,16 +122,15 @@ let
     axu = Axis(fig[1, 1]; ylabel = "Velocity", xticklabelsvisible = false)
     lines!(axu, xs, ustart; color = Cycled(2), label = "Initial DNS")
     lines!(axu, xs, u; color = Cycled(1), label = "Final DNS")
-    scatterlines!(axu,
+    scatterlines!(
+        axu,
         points_stag(Grid(setup.L, setup.nH[j])),
         # u_classic[j][:, i];
         u_swapfil[j][:, i];
-        color = Cycled(3), label = "Smag",
+        color = Cycled(3),
+        label = "Smag",
     )
-    lines!(axu,
-           xs,
-           Ubar[:, i]; color = Cycled(3), label = "Filtered",
-    )
+    lines!(axu, xs, Ubar[:, i]; color = Cycled(3), label = "Filtered")
     axislegend(axu)
     #
     axth = Axis(fig[2, 1]; xticklabelsvisible = false, ylabel = "Flux")

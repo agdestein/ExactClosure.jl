@@ -45,19 +45,25 @@ setup |> pairs
 series =
     map([:tophat, :gaussian]) do lesfiltertype
         lesfiltertype => map(setup.nH) do nH
-            (; L, nh, visc, kpeak, initialenergy, tstop, nsample, Δ_scalers, backend) = setup
+            (; L, nh, visc, kpeak, initialenergy, tstop, nsample, Δ_scalers, backend) =
+                setup
             gh = Grid(L, nh)
             gH = Grid(L, nH)
             widths = Δ_scalers * spacing(gH)
             nΔ = length(widths)
-            fields = (;
-                dns_ref = (; g = gh, u = zeros(nh, nsample, nΔ), label = "DNS"),
-                dns_fil = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Filtered DNS"),
-                nomodel = (; g = gH, u = zeros(nH, nsample, nΔ), label = "No model"),
-                class_m = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic"),
-                class_p = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic+"),
-                swapfil = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Swap (ours)"),
-            ) |> adapt(backend)
+            fields =
+                (;
+                    dns_ref = (; g = gh, u = zeros(nh, nsample, nΔ), label = "DNS"),
+                    dns_fil = (;
+                        g = gH,
+                        u = zeros(nH, nsample, nΔ),
+                        label = "Filtered DNS",
+                    ),
+                    nomodel = (; g = gH, u = zeros(nH, nsample, nΔ), label = "No model"),
+                    class_m = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic"),
+                    class_p = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic+"),
+                    swapfil = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Swap (ours)"),
+                ) |> adapt(backend)
             for (i, j) in Iterators.product(1:nsample, eachindex(widths)) |> collect
                 @info "Filter: $(lesfiltertype), N = $nH, sample = $i, Δ/h = $(Δ_scalers[j])"
                 rng = Xoshiro(i)

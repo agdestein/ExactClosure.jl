@@ -1,6 +1,8 @@
 "1D simulation."
 module Burgers
 
+using ..ExactClosure
+
 export Grid,
     points_stag,
     points_coll,
@@ -20,7 +22,9 @@ export Grid,
 
 using Adapt
 using FFTW
+using JLD2
 using LinearAlgebra
+using Makie
 using Random
 import AcceleratedKernels as AK
 
@@ -44,7 +48,8 @@ points_coll(g) = range(0, g.L, g.n + 1)[2:end] .- spacing(g) / 2
 @inline @inbounds δ_stag(g, u, i) = (u[i|>g] - u[i-1|>g]) / spacing(g)
 @inline @inbounds δ_coll(g, p, i) = (p[i+1|>g] - p[i|>g]) / spacing(g)
 
-@inline @inbounds stress(g, u, visc, i) = -(u[i-1|>g] + u[i|>g])^2 / 8 + visc * δ_stag(g, u, i)
+@inline @inbounds stress(g, u, visc, i) =
+    -(u[i-1|>g] + u[i|>g])^2 / 8 + visc * δ_stag(g, u, i)
 
 # CFL number
 cfl(g, u, visc) = min(spacing(g) / maximum(abs, u), spacing(g)^2 / visc)
@@ -52,7 +57,7 @@ cfl(g, u, visc) = min(spacing(g) / maximum(abs, u), spacing(g)^2 / visc)
 rhs!(du, u, visc, g) =
     AK.foreachindex(u) do i
         @inline
-        sleft  = stress(g, u, visc, i)
+        sleft = stress(g, u, visc, i)
         sright = stress(g, u, visc, i + 1)
         du[i] = (sright - sleft) / spacing(g)
     end
@@ -93,7 +98,6 @@ function rk4_timestep!(g, u, uold, k1, k2, k3, k4, visc, dt)
         @inline
         @inbounds u[i] = uold[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
     end
-
 end
 
 # Filters
@@ -218,9 +222,12 @@ function suravg_coll!(gH, gh, pH, ph)
     pH
 end
 
+bump_profile(rng, k, kpeak) = (k / kpeak)^4 * exp(-2 * (k / kpeak)^2 + 2π * im * rand(rng))
+linear_profile(rng, k, kpeak) = k > 0 ? k^-2.0 * exp(2π * im * rand(rng)) : 0.0 + 0.0im
+
 function randomfield(rng, g, kpeak, totalenergy)
     k = 0:div(g.n, 2)
-    c = @. (k / kpeak)^4 * exp(-2 * (k / kpeak)^2 + 2π * im * rand(rng))
+    c = bump_profile.(rng, k, kpeak)
     u = irfft(c * g.n, g.n)
     etot = sum(abs2, u) / 2 * spacing(g)
     sqrt(totalenergy / etot) * u
@@ -257,6 +264,72 @@ function build_doublekernel(F, G)
     end
     K, w_double
 end
+
+run_dns_aided_les(setup) =
+    for (nH, Δ_ratio) in Iterators.product(setup.nH, setup.Δ_ratios)
+        (; L, nh, visc, kpeak, initialenergy, tstop, nsample, backend, outdir) = setup
+        cpu = AK.KernelAbstractions.CPU()
+        gh = Grid(L, nh)
+        gH = Grid(L, nH)
+        Δ = spacing(gH) * Δ_ratio
+        fields = (;
+            dns_ref = (; g = gh, u = zeros(nh, nsample) |> adapt(backend), label = "DNS"),
+            dns_fil = (;
+                g = gH,
+                u = zeros(nH, nsample) |> adapt(backend),
+                label = "Filtered DNS",
+            ),
+            nomodel = (;
+                g = gH,
+                u = zeros(nH, nsample) |> adapt(backend),
+                label = "No model",
+            ),
+            class_m = (;
+                g = gH,
+                u = zeros(nH, nsample) |> adapt(backend),
+                label = "Classic",
+            ),
+            class_p = (;
+                g = gH,
+                u = zeros(nH, nsample) |> adapt(backend),
+                label = "Classic+",
+            ),
+            swapfil = (;
+                g = gH,
+                u = zeros(nH, nsample) |> adapt(backend),
+                label = "Swap (ours)",
+            ),
+        )
+        for i = 1:nsample
+            @info "Δ/h = $Δ_ratio, N = $nH, sample $i of $nsample"
+            rng = Xoshiro(i)
+            ustart = randomfield(rng, gh, kpeak, initialenergy) |> adapt(backend)
+            sols = dns_aided_les(
+                ustart,
+                gh,
+                gH,
+                visc;
+                Δ,
+                tstop,
+                cfl_factor = 0.3,
+                lesfiltertype = :gaussian,
+            )
+            for key in keys(fields)
+                copyto!(view(fields[key].u, :, i), sols[key])
+            end
+        end
+        result = (; Δ_ratio, nH, fields = adapt(cpu, fields))
+        file = "$outdir/burgers_Δ_ratio=$(Δ_ratio)_hH=$(nH).jld2"
+        save_object(file, result)
+    end
+
+load_dns_aided_les(setup) =
+    map(Iterators.product(setup.nH, setup.Δ_ratios)) do (nH, Δ_ratio)
+        (; outdir) = setup
+        file = "$outdir/burgers_Δ_ratio=$(Δ_ratio)_hH=$(nH).jld2"
+        @info "Loading $file"
+        load_object(file)
+    end
 
 # Compare closure formulations
 function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertype)
@@ -366,9 +439,9 @@ function stepfromstress!(u, s, g, dt)
     AK.synchronize(AK.get_backend(u))
 end
 
-function compute_dissipation(series, setup, lesfiltertype)
-    (; visc, Δ_ratio) = setup
-    map(series) do (; nH, fields)
+function compute_dissipation(series, setup)
+    (; visc, lesfiltertype) = setup
+    map(series) do (; nH, Δ_ratio, fields)
         gh = Grid(setup.L, setup.nh)
         gH = Grid(setup.L, nH)
         Δ = spacing(gH) * Δ_ratio
@@ -442,7 +515,6 @@ function compute_dissipation(series, setup, lesfiltertype)
         )
     end
 end
-export compute_dissipation
 
 function create_dns(setup; cfl_factor)
     (; L, nh, kpeak, initialenergy, visc, tstop, nsample) = setup
@@ -689,7 +761,6 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
                     @inline
                     ubar[i] = ubar0[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
                 end
-
             end
             Ubar[:, j] = ubar
         end
@@ -709,6 +780,217 @@ function smagorinsky_rhs!(du, u, s, g, visc, C)
         @inline
         du[i] = δ_coll(g, s, i)
     end
+end
+
+# Compute spectra
+compute_spectra(series, setup) =
+    map(series) do (; Δ_ratio, nH, fields)
+        @show Δ_ratio, nH
+        gh = Grid(setup.L, setup.nh)
+        gH = Grid(setup.L, nH)
+        specs = map(fields) do (; u, g, label)
+            uhat = rfft(u, 1)
+            n, nsample = size(u)
+            e = sum(u -> abs2(u) / 2 / n^2 / nsample, uhat; dims = 2)
+            e = e[2:end]
+            k = 1:div(n, 2)
+            (; k, e, label)
+        end
+        (; nH, Δ_ratio, specs)
+    end
+
+# Plot spectra
+plot_spectra(specseries, setup) =
+    for (iΔ, Δ_ratio) in enumerate(setup.Δ_ratios)
+        (; plotdir) = setup
+        fig = Figure(; size = (400, 800))
+        f = fig[1, 1] = GridLayout()
+        ticks = 2 .^ (0:2:10)
+        axes = map(specseries[:, iΔ] |> enumerate) do (i, specseries)
+            (; nH, specs) = specseries
+            islast = i == 3
+            ax = Axis(
+                f[i, 1];
+                yscale = log10,
+                xscale = log10,
+                xlabel = "Wavenumber",
+                ylabel = "Energy",
+                xticksvisible = islast,
+                xticklabelsvisible = islast,
+                xlabelvisible = islast,
+            )
+            tip = specs.dns_fil
+            # o = (22, 70, 210)[i]
+            o = (22, 38, 80)[i]
+            ax_zoom = ExactClosure.zoombox!(
+                f[i, 1],
+                ax;
+                point = (tip.k[end-o], tip.e[end-o]),
+                logx = 1.3,
+                logy = 2.5,
+                relwidth = 0.45,
+                relheight = 0.45,
+            )
+            styles = (;
+                dns_ref = (; color = :black),
+                dns_fil = (; color = :black, linestyle = :dash),
+                nomodel = (; color = Cycled(1)),
+                class_m = (; color = Cycled(2)),
+                class_p = (; color = Cycled(3)),
+                swapfil = (; color = Cycled(4)),
+            )
+            for key in [:dns_ref, :nomodel, :class_m, :class_p, :swapfil, :dns_fil]
+                (; k, e, label) = specs[key]
+                # At the end of the spectrum, there are too many points for plotting.
+                # Choose a logarithmically equispaced subset of points instead
+                npoint = 500
+                ii = round.(Int, logrange(1, length(k), npoint)) |> unique
+                lines!(ax, k[ii], e[ii]; label, styles[key]...)
+                lines!(ax_zoom, k[ii], e[ii]; styles[key]...)
+            end
+            Label(
+                f[i, 1],
+                "N = $nH";
+                # fontsize = 26,
+                font = :bold,
+                padding = (10, 10, 10, 10),
+                halign = :right,
+                valign = :top,
+                tellwidth = false,
+                tellheight = false,
+            )
+            ax
+        end
+        Legend(
+            fig[0, 1],
+            axes[1];
+            tellwidth = false,
+            orientation = :horizontal,
+            nbanks = 2,
+            framevisible = false,
+        )
+        linkaxes!(axes...)
+        rowgap!(fig.layout, 10)
+        save(
+            "$(plotdir)/burgers_spectrum_Delta_ratio=$Δ_ratio.pdf",
+            fig;
+            backend = CairoMakie,
+        )
+        display(fig)
+    end
+
+compute_errors(series) =
+map([:nomodel, :class_m, :class_p, :swapfil]) do key
+    e = map(series) do (; nH, fields)
+        (; u) = fields[key]
+        norm(u - fields.dns_fil.u) / norm(fields.dns_fil.u)
+    end
+    key => (; e, series[1].fields[key].label)
+end |> NamedTuple
+
+# Write errors to LaTeX table
+function write_error_table(errseries, setup)
+    (; outdir) = setup
+    path = joinpath(outdir, "tables") |> mkpath
+    file = joinpath(path, "burgers_error.tex")
+    open(file, "w") do io
+        tab = "    "
+        c = join(fill("r", length(errseries) + 2), " ")
+        println(io, "\\begin{tabular}{$c}")
+        println(io, tab, "\\toprule")
+        labels = join(map(f -> f.label, errseries), " & ")
+        println(io, tab, "\$\\Delta / h\$ & \$N\$ & $labels \\\\")
+        println(io, tab, "\\midrule")
+        for j in eachindex(setup.Δ_ratios), i in eachindex(setup.nH)
+            e = map(f -> round(f.e[i, j]; sigdigits = 3), errseries)
+            println(
+                io,
+                tab,
+                setup.Δ_ratios[j],
+                " & ",
+                setup.nH[i],
+                " & ",
+                join(e, " & "),
+                " \\\\",
+            )
+        end
+        println(io, tab, "\\bottomrule")
+        println(io, "\\end{tabular}")
+        println(io)
+        println(io, "% vim: conceallevel=0 textwidth=0")
+    end
+    open(readlines, file) .|> println
+    nothing
+end
+
+
+# Plot dissipation coefficient density
+function plot_dissipation(diss, setup)
+    (; plotdir) = setup
+    models = [
+        (; label = "No-model", sym = :nomodel),
+        (; label = "Classic", sym = :class_m),
+        (; label = "Classic+", sym = :class_p),
+        (; label = "Swap (ours)", sym = :swapfil),
+    ]
+    fig = Figure(; size = (400, 800))
+    for (i, diss) in diss |> enumerate
+        n = setup.nH[i]
+        g = Grid(setup.L, n)
+        Δx = spacing(g)
+        Δ = setup.Δ_ratio * Δx
+        a = 1.0e2
+        ax = Axis(
+            fig[i, 1];
+            xlabelvisible = i == 3,
+            xticksvisible = i == 3,
+            xticklabelsvisible = i == 3,
+            xlabel = "Dissipation",
+            ylabel = "Density",
+            yscale = log10,
+        )
+        xlims!(ax, -0.3 * a, 0.5 * a)
+        ylims!(ax, 1e-4, 4e-1)
+        for (j, model) in enumerate(models)
+            d = diss[model.sym] / (Δ^2 + Δx^2)
+            s = median(d)
+            if model.sym == :nomodel
+                lines!(
+                    ax,
+                    [Point2(s, 1e-5), Point2(s, 1e0)];
+                    color = Cycled(j),
+                    model.label,
+                )
+            else
+                # lines!(ax, [Point2(s, 1e-5), Point2(s, 1e0)]; color = Cycled(j), linestyle = :dash)
+                k = kde(d; boundary = (-a, a))
+                lines!(ax, k.x, k.density; model.label, color = Cycled(j))
+            end
+        end
+        Label(
+            fig[i, 1],
+            "N = $(setup.nH[i])";
+            font = :bold,
+            padding = (10, 0, 0, 10),
+            halign = :left,
+            valign = :top,
+            tellwidth = false,
+            tellheight = false,
+        )
+        i == 1 && Legend(
+            fig[0, 1],
+            ax;
+            tellwidth = false,
+            orientation = :horizontal,
+            framevisible = false,
+            nbanks = 2,
+        )
+    end
+    # rowgap!(fig.layout, 10)
+    file = "$(plotdir)/burgers_dissipation.pdf"
+    @info "Saving dissipation plot to $file"
+    save(file, fig; backend = CairoMakie)
+    fig
 end
 
 end
