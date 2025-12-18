@@ -21,6 +21,7 @@ export Grid,
     spacing
 
 using Adapt
+using CairoMakie
 using FFTW
 using JLD2
 using LinearAlgebra
@@ -827,7 +828,7 @@ plot_spectra(specseries, setup) =
                 ax;
                 point = (tip.k[end-o], tip.e[end-o]),
                 logx = 1.3,
-                logy = 2.5,
+                logy = 3.0,
                 relwidth = 0.45,
                 relheight = 0.45,
             )
