@@ -84,7 +84,6 @@ stress(u, visc, i, j) =
         dj_ui = (ui_rightj - ui_leftj) / h
         di_uj = (uj_righti - uj_lefti) / h
         etaj_ui * etai_uj - visc * (dj_ui + di_uj)
-        # -visc * (dj_ui + di_uj)
     end
 
 tensordivergence!(du, σ, doadd) =
@@ -98,22 +97,26 @@ tensordivergence!(du, σ, doadd) =
             σ11, σ22, σ12 = σ
             du1, du2 = du
             I1, I2 = I.I
-            du1[I] = doadd * du1[I] - (σ11[I1+1, I2] - σ11[I1, I2]) / h - (σ12[I1, I2] - σ12[I1, I2-1]) / h
-            du2[I] = doadd * du1[I] - (σ12[I1, I2] - σ12[I1-1, I2]) / h - (σ22[I1, I2+1] - σ22[I1, I2]) / h
+            du1[I] =
+                doadd * du1[I] - (σ11[I1+1, I2] - σ11[I1, I2]) / h -
+                (σ12[I1, I2] - σ12[I1, I2-1]) / h
+            du2[I] =
+                doadd * du2[I] - (σ12[I1, I2] - σ12[I1-1, I2]) / h -
+                (σ22[I1, I2+1] - σ22[I1, I2]) / h
         else
             σ11, σ22, σ33, σ12, σ23, σ31 = σ
             du1, du2, du3 = du
             I1, I2, I3 = I.I
-            du1[I] = doadd * du1[I] -
-                (σ11[I1+1, I2, I3] - σ11[I1, I2, I3]) / h -
+            du1[I] =
+                doadd * du1[I] - (σ11[I1+1, I2, I3] - σ11[I1, I2, I3]) / h -
                 (σ12[I1, I2+1, I3] - σ12[I1, I2, I3]) / h -
                 (σ31[I1, I2, I3+1] - σ31[I1, I2, I3]) / h
-            du2[I] = doadd * du2[I] -
-                (σ12[I1+1, I2, I3] - σ12[I1, I2, I3]) / h -
+            du2[I] =
+                doadd * du2[I] - (σ12[I1+1, I2, I3] - σ12[I1, I2, I3]) / h -
                 (σ22[I1, I2+1, I3] - σ22[I1, I2, I3]) / h -
                 (σ23[I1, I2, I3+1] - σ23[I1, I2, I3]) / h
-            du3[I] = doadd * du3[I] -
-                (σ31[I1+1, I2, I3] - σ31[I1, I2, I3]) / h -
+            du3[I] =
+                doadd * du3[I] - (σ31[I1+1, I2, I3] - σ31[I1, I2, I3]) / h -
                 (σ23[I1, I2+1, I3] - σ23[I1, I2, I3]) / h -
                 (σ33[I1, I2, I3+1] - σ33[I1, I2, I3]) / h
         end
@@ -130,21 +133,30 @@ tensordivergence_nonsym!(du, σ, doadd) =
             σ11, σ21, σ12, σ22 = σ
             du1, du2 = du
             I1, I2 = I.I
-            du1[I] = doadd * du1[I] - (σ11[I1+1, I2] - σ11[I1, I2]) / h - (σ12[I1, I2] - σ12[I1, I2-1]) / h
-            du2[I] = doadd * du2[I] - (σ21[I1, I2] - σ21[I1-1, I2]) / h - (σ22[I1, I2+1] - σ22[I1, I2]) / h
+            du1[I] =
+                doadd * du1[I] - #
+                (σ11[I1+1, I2] - σ11[I1, I2]) / h - #
+                (σ12[I1, I2] - σ12[I1, I2-1]) / h
+            du2[I] =
+                doadd * du2[I] - #
+                (σ21[I1, I2] - σ21[I1-1, I2]) / h - #
+                (σ22[I1, I2+1] - σ22[I1, I2]) / h
         else
             σ11, σ21, σ31, σ12, σ22, σ32, σ13, σ23, σ33 = σ
             du1, du2, du3 = du
             I1, I2, I3 = I.I
-            du1[I] = doadd * du1[I] -
+            du1[I] =
+                doadd * du1[I] - #
                 (σ11[I1+1, I2, I3] - σ11[I1, I2, I3]) / h -
                 (σ12[I1, I2+1, I3] - σ12[I1, I2, I3]) / h -
                 (σ13[I1, I2, I3+1] - σ13[I1, I2, I3]) / h
-            du2[I] = doadd * du2[I] -
+            du2[I] =
+                doadd * du2[I] - #
                 (σ21[I1+1, I2, I3] - σ21[I1, I2, I3]) / h -
                 (σ22[I1, I2+1, I3] - σ22[I1, I2, I3]) / h -
                 (σ23[I1, I2, I3+1] - σ23[I1, I2, I3]) / h
-            du3[I] = doadd * du3[I] -
+            du3[I] =
+                doadd * du3[I] - #
                 (σ31[I1+1, I2, I3] - σ31[I1, I2, I3]) / h -
                 (σ32[I1, I2+1, I3] - σ32[I1, I2, I3]) / h -
                 (σ33[I1, I2, I3+1] - σ33[I1, I2, I3]) / h
@@ -316,15 +328,7 @@ vorticity!(w, u) =
 
 peak_profile(k; kpeak) = k^4 * exp(-2 * (k / kpeak)^2)
 
-function randomfield(
-    profile,
-    grid,
-    backend,
-    poisson;
-    totalenergy = 1,
-    rng,
-    kwargs...,
-)
+function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwargs...)
     (; n) = grid
     (; plan) = poisson
     D = dim(grid)
@@ -673,6 +677,7 @@ function dnsaid()
     u_c = vectorfield(g_les, backend)
     u_cf = vectorfield(g_les, backend)
     u_cfd = vectorfield(g_les, backend)
+    u_cfd_symm = vectorfield(g_les, backend)
 
     # Filter kernels
     comp = div(n_dns, n_les)
@@ -682,19 +687,14 @@ function dnsaid()
     G_Delta = gaussian(g_dns, 2H, 3)
     G_Delta_H = composekernel(G_H, G_Delta)
     Delta_H_kernel = kernelproduct(g_dns, ntuple(Returns(G_Delta_H), D))
-    Delta_H_i_kernel = ntuple(
-        i -> kernelproduct(g_dns, ntuple(j -> i == j ? G_Delta : G_Delta_H, D)),
-        D,
-    )
+    Delta_H_i_kernel =
+        ntuple(i -> kernelproduct(g_dns, ntuple(j -> i == j ? G_Delta : G_Delta_H, D)), D)
 
     # Position indicators for staggered grid
     faces = ntuple(i -> ntuple(==(i), D), D)
     center = ntuple(Returns(false), D)
     corner2D = (true, true)
-    corners3D =
-        (false, true, true),
-        (true, false, true),
-        (true, true, false)
+    corners3D = (false, true, true), (true, false, true), (true, true, false)
 
     # Initialize LES fields
     u_dns_Delta_H = map(1:D) do i
@@ -711,6 +711,7 @@ function dnsaid()
         copyto!(u_c[i].data, u_dns_Delta_H_concrete[i].data)
         copyto!(u_cf[i].data, u_dns_Delta_H_concrete[i].data)
         copyto!(u_cfd[i].data, u_dns_Delta_H_concrete[i].data)
+        copyto!(u_cfd_symm[i].data, u_dns_Delta_H_concrete[i].data)
     end
 
     t = 0.0
@@ -728,13 +729,28 @@ function dnsaid()
         project!(du_dns, p_dns, poisson_dns)
         r = if D == 2
             r11 = LazyField((σ_dns, p_dns, I) -> σ_dns[1][I] + p_dns[I], g_dns, σ_dns, p_dns)
-            r22 = LazyField((σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I], g_dns, σ_dns, p_dns)
+            r22 = LazyField(
+                (σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I],
+                g_dns,
+                σ_dns,
+                p_dns,
+            )
             r12 = σ_dns[3]
             r11, r22, r12
         else
             r11 = LazyField((σ_dns, p_dns, I) -> σ_dns[1][I] + p_dns[I], g_dns, σ_dns, p_dns)
-            r22 = LazyField((σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I], g_dns, σ_dns, p_dns)
-            r33 = LazyField((σ_dns, p_dns, I) -> σ_dns[3][I] + p_dns[I], g_dns, σ_dns, p_dns)
+            r22 = LazyField(
+                (σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I],
+                g_dns,
+                σ_dns,
+                p_dns,
+            )
+            r33 = LazyField(
+                (σ_dns, p_dns, I) -> σ_dns[3][I] + p_dns[I],
+                g_dns,
+                σ_dns,
+                p_dns,
+            )
             r12 = σ_dns[4]
             r23 = σ_dns[5]
             r31 = σ_dns[6]
@@ -775,6 +791,51 @@ function dnsaid()
             r11_c, r21_c, r31_c, r12_c, r22_c, r32_c, r13_c, r23_c, r33_c
         end
 
+        r_Delta_H_i_symm = if D == 2
+            r_Delta_H_i_11, r_Delta_H_i_21, r_Delta_H_i_12, r_Delta_H_i_22 = r_Delta_H_i
+            r_Delta_H_i_symm_12 = LazyField(
+                (r21, r12, I) -> (r21[I] + r12[I]) / 2,
+                g_les,
+                r_Delta_H_i_21,
+                r_Delta_H_i_12,
+            )
+            r_Delta_H_i_11, r_Delta_H_i_22, r_Delta_H_i_symm_12
+        else
+            r_Delta_H_i_11,
+            r_Delta_H_i_21,
+            r_Delta_H_i_31,
+            r_Delta_H_i_12,
+            r_Delta_H_i_22,
+            r_Delta_H_i_32,
+            r_Delta_H_i_13,
+            r_Delta_H_i_23,
+            r_Delta_H_i_33 = r_Delta_H_i
+            r_Delta_H_i_symm_12 = LazyField(
+                (r21, r12, I) -> (r21[I] + r12[I]) / 2,
+                g_les,
+                r_Delta_H_i_21,
+                r_Delta_H_i_12,
+            )
+            r_Delta_H_i_symm_23 = LazyField(
+                (r32, r23, I) -> (r32[I] + r23[I]) / 2,
+                g_les,
+                r_Delta_H_i_32,
+                r_Delta_H_i_23,
+            )
+            r_Delta_H_i_symm_31 = LazyField(
+                (r31, r13, I) -> (r31[I] + r13[I]) / 2,
+                g_les,
+                r_Delta_H_i_31,
+                r_Delta_H_i_13,
+            )
+            r_Delta_H_i_11,
+            r_Delta_H_i_22,
+            r_Delta_H_i_33,
+            r_Delta_H_i_symm_12,
+            r_Delta_H_i_symm_23,
+            r_Delta_H_i_symm_31
+        end
+
         r_Delta_H = if D == 2
             r11, r22, r12 = r
             r11_bar = lazyfilter(r11, Delta_H_kernel)
@@ -802,10 +863,8 @@ function dnsaid()
         end
 
         u_dns_Delta_H = map(u -> lazyfilter(u, Delta_H_kernel), u_dns)
-        u_dns_Delta_H_coarse = ntuple(
-            i -> lazycoarsegrain(g_les, u_dns_Delta_H[i], faces[i]),
-            D,
-        )
+        u_dns_Delta_H_coarse =
+            ntuple(i -> lazycoarsegrain(g_les, u_dns_Delta_H[i], faces[i]), D)
 
         # No-model
         σ_nomo = stresstensor(u_nomo, visc)
@@ -818,8 +877,18 @@ function dnsaid()
         project!(du_dns2, p_dns2, poisson_dns)
         r2 = if D == 2
             σ2_11, σ2_22, σ2_12 = σ_dns2
-            r2_11 = LazyField((σ2_11, p_dns2, I) -> σ2_11[I] + p_dns2[I], g_dns, σ2_11, p_dns2)
-            r2_22 = LazyField((σ2_22, p_dns2, I) -> σ2_22[I] + p_dns2[I], g_dns, σ2_22, p_dns2)
+            r2_11 = LazyField(
+                (σ2_11, p_dns2, I) -> σ2_11[I] + p_dns2[I],
+                g_dns,
+                σ2_11,
+                p_dns2,
+            )
+            r2_22 = LazyField(
+                (σ2_22, p_dns2, I) -> σ2_22[I] + p_dns2[I],
+                g_dns,
+                σ2_22,
+                p_dns2,
+            )
             r2_12 = σ2_12
             r2_11_c = lazycoarsegrain(g_les, r2_11, center)
             r2_22_c = lazycoarsegrain(g_les, r2_22, center)
@@ -827,9 +896,24 @@ function dnsaid()
             r2_11_c, r2_22_c, r2_12_c
         else
             σ2_11, σ2_22, σ2_33, σ2_12, σ2_23, σ2_31 = σ_dns2
-            r2_11_ = LazyField((σ2_11, p_dns2, I) -> σ2_11[I] + p_dns2[I], g_dns, σ2_11, p_dns2)
-            r2_22_ = LazyField((σ2_22, p_dns2, I) -> σ2_22[I] + p_dns2[I], g_dns, σ2_22, p_dns2)
-            r2_33_ = LazyField((σ2_33, p_dns2, I) -> σ2_33[I] + p_dns2[I], g_dns, σ2_33, p_dns2)
+            r2_11_ = LazyField(
+                (σ2_11, p_dns2, I) -> σ2_11[I] + p_dns2[I],
+                g_dns,
+                σ2_11,
+                p_dns2,
+            )
+            r2_22_ = LazyField(
+                (σ2_22, p_dns2, I) -> σ2_22[I] + p_dns2[I],
+                g_dns,
+                σ2_22,
+                p_dns2,
+            )
+            r2_33_ = LazyField(
+                (σ2_33, p_dns2, I) -> σ2_33[I] + p_dns2[I],
+                g_dns,
+                σ2_33,
+                p_dns2,
+            )
             r2_12 = σ2_12
             r2_23 = σ2_23
             r2_31 = σ2_31
@@ -842,16 +926,24 @@ function dnsaid()
             r2_11_c, r2_22_c, r2_33_c, r2_12_c, r2_23_c, r2_31_c
         end
         σ_c = stresstensor(u_c, visc)
-        σ_both = map((σ_c, σ2) -> LazyField((σ_c, σ2, I) -> σ_c[I] - σ2[I], g_les, σ_c, σ2), σ_c, σ2)
-        tensordivergence!(du_les, σ_both, false) # Overwrite du
+        tensordivergence!(du_les, σ_c, false) # Overwrite du
         project!(du_les, p_les, poisson_les) # σ_both is projected
-        tensordivergence!(du_les, r_Delta_H, true) # Add to existing du, don't project
+        r_both = map(
+            (r1, r2) -> LazyField((r1, r2, I) -> r1[I] - r2[I], g_les, r1, r2),
+            r_Delta_H,
+            r2,
+        )
+        tensordivergence!(du_les, r_both, true) # Add to existing du, don't project
         foreach(i -> axpy!(dt, du_les[i].data, u_c[i].data), 1:D)
 
         # Classic+Flux
         σ2 = stresstensor(u_dns_Delta_H_coarse, visc)
         σ_cf = stresstensor(u_cf, visc)
-        σ_both = map((σ_cf, σ2) -> LazyField((σ_cf, σ2, I) -> σ_cf[I] - σ2[I], g_les, σ_cf, σ2), σ_cf, σ2)
+        σ_both = map(
+            (σ_cf, σ2) -> LazyField((σ_cf, σ2, I) -> σ_cf[I] - σ2[I], g_les, σ_cf, σ2),
+            σ_cf,
+            σ2,
+        )
         tensordivergence!(du_les, σ_both, false) # Overwrite du
         project!(du_les, p_les, poisson_les) # σ_both is projected
         tensordivergence!(du_les, r_Delta_H, true) # Add to existing du, don't project
@@ -860,52 +952,70 @@ function dnsaid()
         # Classic+Flux+Div
         σ2 = stresstensor(u_dns_Delta_H_coarse, visc)
         σ_cfd = stresstensor(u_cfd, visc)
-        σ_both = map((σ1, σ2) -> LazyField((σ1, σ2, I) -> σ1[I] - σ2[I], g_les, σ1, σ2), σ_cfd, σ2)
+        σ_both = map(
+            (σ1, σ2) -> LazyField((σ1, σ2, I) -> σ1[I] - σ2[I], g_les, σ1, σ2),
+            σ_cfd,
+            σ2,
+        )
         tensordivergence!(du_les, σ_both, false) # Overwrite du
         project!(du_les, p_les, poisson_les) # σ_both is projected
         tensordivergence_nonsym!(du_les, r_Delta_H_i, true) # Add to existing du, don't project
         foreach(i -> axpy!(dt, du_les[i].data, u_cfd[i].data), 1:D)
 
+        # Classic+Flux+Div symmetrized
+        σ2 = stresstensor(u_dns_Delta_H_coarse, visc)
+        σ_cfd_symm = stresstensor(u_cfd_symm, visc)
+        σ_both = map(
+            (σ1, σ2) -> LazyField((σ1, σ2, I) -> σ1[I] - σ2[I], g_les, σ1, σ2),
+            σ_cfd_symm,
+            σ2,
+        )
+        tensordivergence!(du_les, σ_both, false) # Overwrite du
+        project!(du_les, p_les, poisson_les) # σ_both is projected
+        tensordivergence!(du_les, r_Delta_H_i_symm, true) # Add to existing du, don't project
+        foreach(i -> axpy!(dt, du_les[i].data, u_cfd_symm[i].data), 1:D)
+
         # DNS
         foreach(i -> axpy!(dt, du_dns[i].data, u_dns[i].data), 1:D)
     end
 
-    (; u_dns, u_nomo, u_c, u_cf, u_cfd)
+    (; u_dns, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
 
-compute_errors(uaid) = let
-    backend = KernelAbstractions.CPU()
-    g_dns = uaid.u_dns[1].grid
-    g_les = uaid.u_nomo[1].grid
-    D = dim(g_dns)
+compute_errors(uaid) =
+    let
+        backend = KernelAbstractions.CPU()
+        g_dns = uaid.u_dns[1].grid
+        g_les = uaid.u_nomo[1].grid
+        D = dim(g_dns)
 
-    # Filter kernels
-    comp = div(g_dns.n, g_les.n)
-    h = spacing(g_dns)
-    H = comp * h
-    G_H = tophat(g_dns, comp)
-    G_Delta = gaussian(g_dns, 2H, 3)
-    G_Delta_H = composekernel(G_H, G_Delta)
-    Delta_H_kernel = kernelproduct(g_dns, ntuple(Returns(G_Delta_H), D))
+        # Filter kernels
+        comp = div(g_dns.n, g_les.n)
+        h = spacing(g_dns)
+        H = comp * h
+        G_H = tophat(g_dns, comp)
+        G_Delta = gaussian(g_dns, 2H, 3)
+        G_Delta_H = composekernel(G_H, G_Delta)
+        Delta_H_kernel = kernelproduct(g_dns, ntuple(Returns(G_Delta_H), D))
 
-    ubar_coarse = map(1:D) do i
-        ubar = lazyfilter(uaid.u_dns[i], Delta_H_kernel)
-        ubar_c = lazycoarsegrain(g_les, ubar, ntuple(==(i), D))
-        ubar_cc = Field(g_les, backend)
-        AK.foreachindex(ubar_cc.data) do ilin
-            @inline
-            ubar_cc[ilin] = ubar_c[ilin]
+        ubar_coarse = map(1:D) do i
+            ubar = lazyfilter(uaid.u_dns[i], Delta_H_kernel)
+            ubar_c = lazycoarsegrain(g_les, ubar, ntuple(==(i), D))
+            ubar_cc = Field(g_les, backend)
+            AK.foreachindex(ubar_cc.data) do ilin
+                @inline
+                ubar_cc[ilin] = ubar_c[ilin]
+            end
+            ubar_cc
         end
-        ubar_cc
-    end
 
-    e = map((; uaid.u_nomo, uaid.u_c, uaid.u_cf, uaid.u_cfd)) do ubar
-        sum(1:D) do i
-            a = ubar[i].data
-            b = ubar_coarse[i].data
-            sum(abs2, a - b) / sum(abs2, b)
-        end / D |> sqrt
+        e = map((; uaid.u_nomo, uaid.u_c, uaid.u_cf, uaid.u_cfd_symm, uaid.u_cfd)) do ubar
+            sum(1:D) do i
+                a = ubar[i].data
+                b = ubar_coarse[i].data
+                sum(abs2, a - b) / sum(abs2, b)
+            end / D |> sqrt
+        end
     end
-end
 
 end

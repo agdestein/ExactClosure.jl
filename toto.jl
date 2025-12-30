@@ -16,7 +16,15 @@ u = let
     # u = NS.Field(grid, backend), NS.Field(grid, backend)
     profile, args = k -> (k > 0) * k^-3.0, (;)
     # profile, args = NS.peak_profile, (; kpeak = 5)
-    u = NS.randomfield(profile, grid, backend, poisson; totalenergy = 1.0, args...)
+    u = NS.randomfield(
+        profile,
+        grid,
+        backend,
+        poisson;
+        rng = Xoshiro(0),
+        totalenergy = 1.0,
+        args...,
+    )
     NS.divergence!(p, u)
     w = NS.Field(grid, backend)
     du = NS.Field(grid, backend), NS.Field(grid, backend)
@@ -31,7 +39,7 @@ u = let
         if i > 0 # Skip first step
             dt = NS.propose_timestep(u, visc, 0.5)
             dt = min(dt, tmax - t) # Don't step past tmax
-            NS.step_forwardeuler!(u, du, p, poisson, visc, dt)
+            # NS.step_forwardeuler!(u, du, p, poisson, visc, dt)
             NS.step_wray3!(u, du, u0, p, poisson, visc, dt)
             t += dt
         end
@@ -39,7 +47,7 @@ u = let
             @show t
             NS.vorticity!(w, u)
             wobs[] = w.data
-            display(fig)
+            # display(fig)
         end
         i += 1
     end
@@ -100,8 +108,15 @@ let
     profile, args = k -> (k > 0) * k^-3.0, (;)
     poisson = NS.poissonsolver(grid, backend)
     p = NS.Field(grid, backend)
-    u = NS.randomfield(profile, grid, backend, poisson;
-                       rng = Xoshiro(0), totalenergy = 1.0, args...)
+    u = NS.randomfield(
+        profile,
+        grid,
+        backend,
+        poisson;
+        rng = Xoshiro(0),
+        totalenergy = 1.0,
+        args...,
+    )
     ubar = NS.vectorfield(grid, backend)
     @show eltype(ubar[1])
     for (ubar, u) in zip(ubar, u)
@@ -129,8 +144,8 @@ uaid.u_nomo[1] |> heatmap
 uaid.u_cfd[1] |> heatmap
 
 begin
-uaid = NS.dnsaid()
-NS.compute_errors(uaid)
+    uaid = NS.dnsaid()
+    NS.compute_errors(uaid)
 end
 
 NS.compute_errors(uaid) |> pairs
