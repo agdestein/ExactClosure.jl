@@ -11,7 +11,6 @@ using Adapt
 using CUDA
 using JLD2
 using LinearAlgebra
-using Printf
 using ExactClosure: NavierStokes
 using Turbulox
 

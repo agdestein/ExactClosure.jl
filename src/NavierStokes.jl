@@ -7,7 +7,6 @@ using Turbulox
 using CUDA
 using KernelAbstractions
 using Makie
-using StaticArrays
 
 get_backend() = CUDA.functional() ? CUDABackend() : CPU()
 

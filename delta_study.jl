@@ -18,7 +18,6 @@ using JLD2
 using KernelDensity
 using LinearAlgebra
 using Random
-using Statistics
 # using WGLMakie
 using GLMakie
 

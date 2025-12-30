@@ -881,13 +881,13 @@ plot_spectra(specseries, setup) =
     end
 
 compute_errors(series) =
-map([:nomodel, :class_m, :class_p, :swapfil]) do key
-    e = map(series) do (; nH, fields)
-        (; u) = fields[key]
-        norm(u - fields.dns_fil.u) / norm(fields.dns_fil.u)
-    end
-    key => (; e, series[1].fields[key].label)
-end |> NamedTuple
+    map([:nomodel, :class_m, :class_p, :swapfil]) do key
+        e = map(series) do (; nH, fields)
+            (; u) = fields[key]
+            norm(u - fields.dns_fil.u) / norm(fields.dns_fil.u)
+        end
+        key => (; e, series[1].fields[key].label)
+    end |> NamedTuple
 
 # Write errors to LaTeX table
 function write_error_table(errseries, setup)
@@ -923,7 +923,6 @@ function write_error_table(errseries, setup)
     open(readlines, file) .|> println
     nothing
 end
-
 
 # Plot dissipation coefficient density
 function plot_dissipation(diss, setup)
