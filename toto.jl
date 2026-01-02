@@ -143,9 +143,9 @@ uaid.u_dns[1] |> heatmap
 uaid.u_nomo[1] |> heatmap
 uaid.u_cfd[1] |> heatmap
 
-begin
-    uaid = NS.dnsaid()
-    NS.compute_errors(uaid)
-end
+uaid = NS.dnsaid()
+uaid = NS.dnsaid_project()
+
+NS.compute_errors(uaid)
 
 NS.compute_errors(uaid) |> pairs
