@@ -224,9 +224,9 @@ let
                 tellheight = false,
                 color = Makie.wong_colors()[1],
             )
-            lines!(ax, KK, gg * H / h; label = "LES-filter")
-            lines!(ax, KK, ff * H / h; label = "Grid-filter")
-            lines!(ax, KK, d * H / h; label = "Double-filter")
+            lines!(ax, KK, gg * H / h; label = "LES filter")
+            lines!(ax, KK, ff * H / h; label = "FVM filter")
+            lines!(ax, KK, d * H / h; label = "LES-FVM filter")
             # R, w = gaussian_weights(gh, sqrt(Δ^2 + H^2); nσ = 5)
             # scatter!(ax, (-R:R) * h / H, w; marker = :circle, label = "Haha")
             (itype, iratio) == (1, 1) && Legend(

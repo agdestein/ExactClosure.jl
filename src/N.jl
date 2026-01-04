@@ -1196,8 +1196,18 @@ function dnsaid_project()
             σ2_11_c, σ2_22_c, σ2_33_c, σ2_12_c, σ2_23_c, σ2_31_c
         end
         σ_c = stresstensor(u_c, visc)
-        σ_all =
-            map((σ_c, σ1, σ2) -> LazyField((σ_c, σ1, σ2, I) -> σ_c[I] + σ1[I] - σ2[I], g_les, σ_c, σ1, σ2), σ_c, σΔH, σ2)
+        σ_all = map(
+            (σ_c, σ1, σ2) -> LazyField(
+                (σ_c, σ1, σ2, I) -> σ_c[I] + σ1[I] - σ2[I],
+                g_les,
+                σ_c,
+                σ1,
+                σ2,
+            ),
+            σ_c,
+            σΔH,
+            σ2,
+        )
         tensordivergence!(du_les, σ_all, false)
         project!(du_les, p_les, poisson_les)
         foreach(i -> axpy!(dt, du_les[i].data, u_c[i].data), 1:D)
@@ -1206,7 +1216,13 @@ function dnsaid_project()
         σ2 = stresstensor(ubar_coarse, visc)
         σ_cf = stresstensor(u_cf, visc)
         σ_all = map(
-            (σ_cf, σ1, σ2) -> LazyField((σ_cf, σ1, σ2, I) -> σ_cf[I] + σ1[I] - σ2[I], g_les, σ_cf, σ1, σ2),
+            (σ_cf, σ1, σ2) -> LazyField(
+                (σ_cf, σ1, σ2, I) -> σ_cf[I] + σ1[I] - σ2[I],
+                g_les,
+                σ_cf,
+                σ1,
+                σ2,
+            ),
             σ_cf,
             σΔH,
             σ2,
@@ -1220,7 +1236,7 @@ function dnsaid_project()
         σ_cfd = stresstensor(u_cfd, visc)
         σ_both = map(
             (σ_cfd, σ2) ->
-            LazyField((σ_cfd, σ2, I) -> σ_cfd[I] - σ2[I], g_les, σ_cfd, σ2),
+                LazyField((σ_cfd, σ2, I) -> σ_cfd[I] - σ2[I], g_les, σ_cfd, σ2),
             σ_cfd,
             σ2,
         )
@@ -1253,24 +1269,22 @@ function dnsaid_project()
     end
     project!(ubar_coarse, p_les, poisson_les)
 
-
     (; u_dns, u_les = ubar_coarse, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
 
-compute_errors(uaid) =
-    let
-        backend = KernelAbstractions.CPU()
-        g_dns = uaid.u_dns[1].grid
-        g_les = uaid.u_nomo[1].grid
-        D = dim(g_dns)
+function compute_errors(uaid)
+    backend = KernelAbstractions.CPU()
+    g_dns = uaid.u_dns[1].grid
+    g_les = uaid.u_nomo[1].grid
+    D = dim(g_dns)
 
-        e = map((; uaid.u_nomo, uaid.u_c, uaid.u_cf, uaid.u_cfd_symm, uaid.u_cfd)) do ubar
-            sum(1:D) do i
-                a = ubar[i].data
-                b = uaid.u_les[i].data
-                sum(abs2, a - b) / sum(abs2, b)
-            end / D |> sqrt
-        end
+    e = map((; uaid.u_nomo, uaid.u_c, uaid.u_cf, uaid.u_cfd_symm, uaid.u_cfd)) do ubar
+        sum(1:D) do i
+            a = ubar[i].data
+            b = uaid.u_les[i].data
+            sum(abs2, a - b) / sum(abs2, b)
+        end / D |> sqrt
     end
+end
 
 end

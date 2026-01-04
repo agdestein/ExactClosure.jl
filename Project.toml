@@ -16,6 +16,7 @@ KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 KernelDensity = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Turbulox = "25c03aae-1219-43c4-862d-5fc87f57ed09"
 WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
@@ -25,3 +26,4 @@ WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 Turbulox = {path = "../Turbulox"}
 
 [compat]
+Printf = "1.11.0"

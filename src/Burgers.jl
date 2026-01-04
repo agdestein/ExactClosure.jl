@@ -3,29 +3,13 @@ module Burgers
 
 using ..ExactClosure
 
-export Grid,
-    points_stag,
-    points_coll,
-    δ_stag,
-    δ_coll,
-    stress,
-    cfl,
-    timestep!,
-    volavg_stag!,
-    volavg_coll!,
-    suravg_stag!,
-    suravg_coll!,
-    randomfield,
-    dissipation,
-    dissipation!,
-    spacing
-
 using Adapt
 using CairoMakie
 using FFTW
 using JLD2
 using LinearAlgebra
 using Makie
+using Printf
 using Random
 import AcceleratedKernels as AK
 
@@ -114,14 +98,12 @@ function gaussian_weights(g, Δ; nσ = 3)
     end
     R, w
 end
-export gaussian_weights
 
 function tophat_weights(g, comp)
     R = div(comp, 2)
     w = fill(one(g.L) / comp, comp)
     R, w
 end
-export tophat_weights
 
 function convolution!(g, kernel, ubar, u)
     R, w = kernel
@@ -136,7 +118,6 @@ function convolution!(g, kernel, ubar, u)
     AK.synchronize(AK.get_backend(ubar))
     ubar
 end
-export convolution!
 
 function coarsegrain_convolve_stag!(gH, gh, uH, uh, kernel)
     comp = div(gh.n, gH.n)
@@ -152,7 +133,6 @@ function coarsegrain_convolve_stag!(gH, gh, uH, uh, kernel)
     AK.synchronize(AK.get_backend(uH))
     uH
 end
-export coarsegrain_convolve_stag!
 
 function coarsegrain_convolve_coll!(gH, gh, pH, ph, kernel)
     comp = div(gh.n, gH.n)
@@ -169,7 +149,6 @@ function coarsegrain_convolve_coll!(gH, gh, pH, ph, kernel)
     AK.synchronize(AK.get_backend(pH))
     pH
 end
-export coarsegrain_convolve_coll!
 
 function volavg_stag!(gH, gh, uH, uh)
     comp = div(gh.n, gH.n)
@@ -275,6 +254,11 @@ run_dns_aided_les(setup) =
         Δ = spacing(gH) * Δ_ratio
         fields = (;
             dns_ref = (; g = gh, u = zeros(nh, nsample) |> adapt(backend), label = "DNS"),
+            dns_ref_fil = (;
+                g = gh,
+                u = zeros(nh, nsample) |> adapt(backend),
+                label = "Filtered DNS",
+            ),
             dns_fil = (;
                 g = gH,
                 u = zeros(nH, nsample) |> adapt(backend),
@@ -293,12 +277,12 @@ run_dns_aided_les(setup) =
             class_p = (;
                 g = gH,
                 u = zeros(nH, nsample) |> adapt(backend),
-                label = "Classic+",
+                label = "Classic+Flux",
             ),
             swapfil = (;
                 g = gH,
                 u = zeros(nH, nsample) |> adapt(backend),
-                label = "Swap (ours)",
+                label = "Classic+Flux+Div (ours)",
             ),
         )
         for i = 1:nsample
@@ -361,6 +345,7 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
     # Allocate arrays
     u = (;
         dns_ref = copy(uh),
+        dns_ref_fil = copy(uh),
         dns_fil = copy(uH),
         nomodel = copy(uH),
         class_m = copy(uH), # bar(r(u)) - r(bar(u))
@@ -428,6 +413,7 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
 
     # Final filtered velocity
     coarsegrain_convolve_stag!(gH, gh, u.dns_fil, u.dns_ref, doublekernel)
+    convolution!(gh, doublekernel, u.dns_ref_fil, u.dns_ref)
 
     u
 end
@@ -541,7 +527,6 @@ function create_dns(setup; cfl_factor)
     end
     Ustart, U
 end
-export create_dns
 
 function smagorinsky_fields(setup, dnsdata; lesfiltertype)
     (; L, nh, nH, visc, Δ_ratio) = setup
@@ -834,13 +819,13 @@ plot_spectra(specseries, setup) =
             )
             styles = (;
                 dns_ref = (; color = :black),
-                dns_fil = (; color = :black, linestyle = :dash),
+                dns_ref_fil = (; color = :black, linestyle = :dash),
                 nomodel = (; color = Cycled(1)),
                 class_m = (; color = Cycled(2)),
                 class_p = (; color = Cycled(3)),
                 swapfil = (; color = Cycled(4)),
             )
-            for key in [:dns_ref, :nomodel, :class_m, :class_p, :swapfil, :dns_fil]
+            for key in [:dns_ref, :dns_ref_fil, :nomodel, :class_m, :class_p, :swapfil]
                 (; k, e, label) = specs[key]
                 # At the end of the spectrum, there are too many points for plotting.
                 # Choose a logarithmically equispaced subset of points instead
@@ -860,6 +845,7 @@ plot_spectra(specseries, setup) =
                 tellwidth = false,
                 tellheight = false,
             )
+            ylims!(ax, 1e-12, 1e-1)
             ax
         end
         Legend(
@@ -867,7 +853,7 @@ plot_spectra(specseries, setup) =
             axes[1];
             tellwidth = false,
             orientation = :horizontal,
-            nbanks = 2,
+            nbanks = 3,
             framevisible = false,
         )
         linkaxes!(axes...)
@@ -989,6 +975,156 @@ function plot_dissipation(diss, setup)
     # rowgap!(fig.layout, 10)
     file = "$(plotdir)/burgers_dissipation.pdf"
     @info "Saving dissipation plot to $file"
+    save(file, fig; backend = CairoMakie)
+    fig
+end
+
+function compute_fractions(data, setup)
+    (; L, nh, visc, lesfiltertype) = setup
+    map(Iterators.product(setup.nH, setup.Δ_ratios)) do (nH, Δ_ratio)
+        gh = Grid(L, nh)
+        gH = Grid(L, nH)
+        Δ = spacing(gH) * Δ_ratio
+
+        # Filter kernels
+        fvmkernel = tophat_weights(gH, div(gh.n, gH.n))
+        leskernel = if lesfiltertype == :tophat
+            lescomp = round(Int, Δ / spacing(gh))
+            R = div(lescomp, 2)
+            lescomp = 2 * R + 1 # Ensure odd
+            tophat_weights(gH, lescomp)
+        elseif lesfiltertype == :gaussian
+            gaussian_weights(gh, Δ)
+        end
+
+        # Build double-filter kernel
+        doublekernel = build_doublekernel(fvmkernel, leskernel)
+
+        # Allocate arrays
+        su = zeros(gh.n)
+        fsu = zeros(gH.n)
+        vsu = zeros(gH.n)
+        vu = zeros(gH.n)
+        VU = zeros(gh.n) # Same as vu, but on DNS grid
+        σ_classic = zeros(gH.n)
+        σ_flux = zeros(gH.n)
+        σ_div = zeros(gH.n)
+
+        f_classic = zeros(gH.n)
+        f_flux = zeros(gH.n)
+        f_div = zeros(gH.n)
+
+        frac = stack(eachcol(data[2])) do uh
+            # DNS stress
+            AK.foreachindex(su) do i
+                @inline
+                @inbounds su[i] = stress(gh, uh, visc, i)
+            end
+            AK.synchronize(AK.get_backend(su))
+
+            # Filtered stresses
+            coarsegrain_convolve_coll!(gH, gh, fsu, su, leskernel)
+            coarsegrain_convolve_coll!(gH, gh, vsu, su, doublekernel)
+
+            # Filtered velocity
+            coarsegrain_convolve_stag!(gH, gh, vu, uh, doublekernel)
+            convolution!(gh, doublekernel, VU, uh)
+
+            # LES stresses
+            comp = div(gh.n, gH.n)
+            a = div(comp, 2)
+            AK.foreachindex(vu) do i
+                @inline
+                @inbounds svu = stress(gH, vu, visc, i)
+                @inbounds sVU = stress(gh, VU, visc, i * comp - a)
+                @inbounds σ_classic[i] = vsu[i] - sVU
+                @inbounds σ_flux[i] = sVU - svu
+                @inbounds σ_div[i] = fsu[i] - vsu[i]
+
+                @inbounds σ_total =
+                    abs(σ_classic[i]) + abs(σ_flux[i]) + abs(σ_div[i]) + eps()
+
+                @inbounds f_classic[i] = abs(σ_classic[i]) / σ_total
+                @inbounds f_flux[i] = abs(σ_flux[i]) / σ_total
+                @inbounds f_div[i] = abs(σ_div[i]) / σ_total
+            end
+            AK.synchronize(AK.get_backend(vu))
+
+            # # Fractions
+            # frac_classic = norm(σ_classic) / norm(σ_classic .+ σ_flux .+ σ_div)
+            # frac_flux = norm(σ_flux) / norm(σ_classic .+ σ_flux .+ σ_div)
+            # frac_div = norm(σ_div) / norm(σ_classic .+ σ_flux .+ σ_div)
+
+            # Fractions
+            frac_classic = sum(f_classic) / gH.n
+            frac_flux = sum(f_flux) / gH.n
+            frac_div = sum(f_div) / gH.n
+
+            vcat(frac_classic, frac_flux, frac_div)
+        end
+
+        frac = sum(frac; dims = 2) / size(frac, 2)
+
+        (; classic = frac[1], flux = frac[2], div = frac[3])
+    end
+end
+
+function plot_fractions(fractions, setup)
+    fig = Figure(; size = (400, 800))
+    (; Δ_ratios, nH, plotdir) = setup
+    colors = Makie.wong_colors()
+    for (i, nH) in enumerate(nH)
+        f = fractions[i, :]
+        f_classic = getindex.(f, :classic)
+        f_flux = getindex.(f, :flux)
+        f_div = getindex.(f, :div)
+        fs = hcat(f_classic, f_flux, f_div)[:]
+        nratio = length(Δ_ratios)
+        ratios = repeat(1:nratio, 1, 3)
+        group = hcat(fill(1, nratio), fill(2, nratio), fill(3, nratio))
+        ax = Axis(
+            fig[i, 1];
+            ylabel = "Fraction",
+            title = "N = $nH",
+            xlabel = "Δ / h",
+            xticks = (1:nratio, map(string, Δ_ratios)),
+            xticklabelsvisible = i == length(setup.nH),
+            xlabelvisible = i == length(setup.nH),
+        )
+
+        bar_labels = map(fs) do f
+            # f = round(f, digits = 2)
+            s = @sprintf "%.2f" f
+            f < 0.031 ? "" : s
+        end
+
+        barplot!(
+            ax,
+            ratios[:],
+            fs;
+            color = colors[group[:]],
+            stack = group[:],
+            bar_labels,
+            label_position = :center,
+
+            # flip_labels_at=(0.0, 0.0),
+        )
+
+    end
+    labels = ["Classic", "Flux", "Div"]
+    elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))
+    title = "Residual flux part"
+    Legend(
+        fig[0, :],
+        elements,
+        labels,
+        title;
+        tellwidth = false,
+        orientation = :horizontal,
+        nbanks = 1,
+        framevisible = false,
+    )
+    file = "$(plotdir)/burgers_fractions.pdf"
     save(file, fig; backend = CairoMakie)
     fig
 end

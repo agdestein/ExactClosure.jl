@@ -1,9 +1,6 @@
-using AcceleratedKernels: AcceleratedKernels as AK
 using ExactClosure: NavierStokes as NS
 using GLMakie
-# using CairoMakie
 using Random
-using JET
 
 u = let
     n = 300
@@ -34,7 +31,7 @@ u = let
     fig |> display
     i = 0
     t = 0.0
-    tmax = 0.1
+    tmax = 5.0
     while t < tmax
         if i > 0 # Skip first step
             dt = NS.propose_timestep(u, visc, 0.5)
@@ -43,7 +40,7 @@ u = let
             NS.step_wray3!(u, du, u0, p, poisson, visc, dt)
             t += dt
         end
-        if i % 20 == 0
+        if i % 1 == 0
             @show t
             NS.vorticity!(w, u)
             wobs[] = w.data
@@ -60,7 +57,7 @@ let
     v = NS.vectorfield(grid, backend)
     for i in eachindex(u)
         ui, vi = u[i], v[i]
-        AK.foreachindex(ui.data) do ilin
+        NS.AK.foreachindex(ui.data) do ilin
             I = NS.linear2cartesian(grid, ilin)
             vi[I] = (ui[I] + ui[NS.right(I, i, -1)]) / 2
         end
