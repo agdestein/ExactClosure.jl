@@ -146,3 +146,5 @@ uaid = NS.dnsaid_project()
 NS.compute_errors(uaid)
 
 NS.compute_errors(uaid) |> pairs
+
+NS.plot_spectra(uaid)

@@ -2,10 +2,14 @@ module NavierStokes
 
 using AcceleratedKernels: AcceleratedKernels as AK
 using Adapt
+using CairoMakie
+using CUDA
 using FFTW
 using KernelAbstractions
 using LinearAlgebra
 using Random
+
+get_backend() = CUDA.functional() ? CUDABackend() : KernelAbstractions.CPU()
 
 struct Grid{D}
     l::Float64
@@ -972,6 +976,7 @@ function dnsaid_project()
     visc = 3e-4
     l = 1.0
     D = 2
+    twarm = 0.1
     tstop = 0.005
     cfl = 0.45
     profile, args = k -> (k > 0) * k^-3.0, (; totalenergy = 1.0)
@@ -1006,11 +1011,32 @@ function dnsaid_project()
     GΔH = kernelproduct(g_dns, ntuple(Returns(FΔH), D))
     GΔHi = ntuple(i -> kernelproduct(g_dns, ntuple(j -> i == j ? FΔ : FΔH, D)), D)
 
+    # Put on device
+    GΔH = adapt(backend, GΔH)
+    GΔHi = adapt(backend, GΔHi)
+
+
     # Position indicators for staggered grid
     faces = ntuple(i -> ntuple(==(i), D), D)
     center = ntuple(Returns(false), D)
     corner2D = (true, true)
     corners3D = (false, true, true), (true, false, true), (true, true, false)
+
+    # Warmup
+    t = 0.0
+    itime = 0
+    while t < twarm
+        dt = propose_timestep(u_dns, visc, cfl)
+        dt = min(dt, twarm - t)
+        t += dt
+        itime += 1
+
+        @info "t = $(round(t; sigdigits=4)) / $(round(twarm; sigdigits=4))"
+
+        # DNS stuff
+        step_forwardeuler!(u_dns, du_dns, p_dns, poisson_dns, visc, dt)
+    end
+
 
     # Initialize LES fields
     for i = 1:D
@@ -1277,7 +1303,6 @@ function compute_errors(uaid)
     g_dns = uaid.u_dns[1].grid
     g_les = uaid.u_nomo[1].grid
     D = dim(g_dns)
-
     e = map((; uaid.u_nomo, uaid.u_c, uaid.u_cf, uaid.u_cfd_symm, uaid.u_cfd)) do ubar
         sum(1:D) do i
             a = ubar[i].data
@@ -1285,6 +1310,41 @@ function compute_errors(uaid)
             sum(abs2, a - b) / sum(abs2, b)
         end / D |> sqrt
     end
+end
+
+function plot_spectra(uaid)
+    visc = 3e-4
+    l = 1.0
+    g_dns = uaid.u_dns[1].grid
+    g_les = uaid.u_les[1].grid
+    poisson_dns = poissonsolver(g_dns, KernelAbstractions.CPU())
+    poisson_les = poissonsolver(g_les, KernelAbstractions.CPU())
+    backend = KernelAbstractions.CPU()
+    stuff_dns = spectral_stuff(g_dns, backend)
+    stuff_les = spectral_stuff(g_les, backend)
+    spec_dns = spectrum(uaid.u_dns, stuff_dns, poisson_dns)
+    spec_les = map([
+        (:u_les     , "Filtered DNS"),
+        (:u_nomo    , "No-model"),
+        (:u_c       , "Classic"),
+        (:u_cf      , "Classic + Flux"),
+        (:u_cfd     , "Classic + Flux + Div"),
+        (:u_cfd_symm, "Classic + Flux + Div (symm)"),
+    ]) do (key, label)
+        s = spectrum(uaid[key], stuff_les, poisson_les)
+            (; s..., label)
+    end
+    fig = Figure()
+    ax = Axis(fig[1, 1];
+              xlabel = "k", ylabel = "E(k)",
+              xscale = log10, yscale = log10)
+    lines!(ax, spec_dns.k, spec_dns.s; label = "DNS")
+    foreach(s -> lines!(ax, s.k, s.s; s.label), spec_les)
+    kkol = [10^1.5, maximum(spec_dns.k)]
+    ekol = 1e4 * kkol .^ (-3)
+    lines!(ax, kkol, ekol)
+    Legend(fig[1, 2], ax)
+    fig
 end
 
 end

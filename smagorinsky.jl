@@ -53,7 +53,7 @@ fields = Burgers.smagorinsky_fields(setup, dnsdata; lesfiltertype = :gaussian);
     sqrt(θ2)
 end
 
-θ_swapfil = map(fields) do (; SH, TH, D_SH, D_TH)
+θ_discret = map(fields) do (; SH, TH, D_SH, D_TH)
     θ2 = -dot(SH, TH) / dot(SH, SH)
     # θ2 = -dot(D_SH, D_TH) / dot(D_SH, D_SH)
     # θ2 = -sum(D_TH) / sum(D_SH)
@@ -61,26 +61,26 @@ end
 end
 
 u_classic = Burgers.solve_smagorinsky(setup, dnsdata, θ_classic; lesfiltertype = :gaussian)
-u_swapfil = Burgers.solve_smagorinsky(setup, dnsdata, θ_swapfil; lesfiltertype = :gaussian)
+u_discret = Burgers.solve_smagorinsky(setup, dnsdata, θ_discret; lesfiltertype = :gaussian)
 
 # save_object("$outdir/burgers_classic.jld2", u_classic)
-# save_object("$outdir/burgers_swapfil.jld2", u_swapfil)
+# save_object("$outdir/burgers_discret.jld2", u_discret)
 
 # u_classic = load_object("$outdir/burgers_classic.jld2")
-# u_swapfil = load_object("$outdir/burgers_swapfil.jld2")
+# u_discret = load_object("$outdir/burgers_discret.jld2")
 
 let
     j = 1
     fig = Figure(; size = (400, 800))
     for (i, nH) in enumerate(setup.nH)
-        gh = Grid(setup.L, setup.nh)
-        gH = Grid(setup.L, nH)
-        xh = points_stag(gh)
-        xH = points_stag(gH)
+        gh = Burgers.Grid(setup.L, setup.nh)
+        gH = Burgers.Grid(setup.L, nH)
+        xh = Burgers.points_stag(gh)
+        xH = Burgers.points_stag(gH)
         ax = Axis(fig[i, 1]; title = "N = $nH", xlabel = "x", ylabel = "u")
         lines!(ax, xh, dnsdata[2][:, j]; label = "DNS")
         # lines!(ax, xH, u_classic[i][:, j]; label = "Smagorinsky")
-        lines!(ax, xH, u_swapfil[i][:, j]; label = "Smagorinsky")
+        lines!(ax, xH, u_discret[i][:, j]; label = "Smagorinsky")
     end
     linkaxes!(fig.content...)
     fig
@@ -126,7 +126,7 @@ let
         axu,
         points_stag(Grid(setup.L, setup.nH[j])),
         # u_classic[j][:, i];
-        u_swapfil[j][:, i];
+        u_discret[j][:, i];
         color = Cycled(3),
         label = "Smag",
     )
@@ -141,7 +141,7 @@ let
     axtH = Axis(fig[3, 1]; xlabel = "x", ylabel = "Flux")
     lines!(axtH, xc, tH; label = "Swap SFS")
     # lines!(axtH, xc, -θ_classic[j]^2 * sh; label = "Classic Smagorinsky")
-    lines!(axtH, xc, -θ_swapfil[j]^2 * sH; label = "Discrete Smagorinsky")
+    lines!(axtH, xc, -θ_discret[j]^2 * sH; label = "Discrete Smagorinsky")
     axislegend(axtH; position = :rb)
     #
     linkxaxes!(axu, axth, axtH)
@@ -161,18 +161,99 @@ end
 
 # Compute relative errors
 relerrs = map(enumerate(setup.nH)) do (i, nH)
-    gh = Grid(setup.L, setup.nh)
-    gH = Grid(setup.L, nH)
+    gh = Burgers.Grid(setup.L, setup.nh)
+    gH = Burgers.Grid(setup.L, nH)
     @show nH
     U = dnsdata[2]
     comp = div(gh.n, gH.n)
     Ubar = fields[i].Ubar[comp:comp:end, :] # Extract coarse-grid components
     U_classic = u_classic[i]
-    U_swapfil = u_swapfil[i]
-    e = map((; classic = U_classic, swapfil = U_swapfil)) do U
+    U_discret = u_discret[i]
+    e = map((; classic = U_classic, discret = U_discret)) do U
         norm(U - Ubar) / norm(Ubar)
     end
     (; nH, e)
+end
+
+
+let
+    colors = Makie.wong_colors()
+    fig = Figure(; size = (400, 320))
+    ax = Axis(fig[1, 1];
+              # xlabel = "N",
+              ylabel = "Smagorinsky coefficient",
+              xticks = (eachindex(relerrs), map(nH -> "N = $nH", setup.nH)),
+              )
+    θ = hcat(θ_classic, θ_discret)[:]
+    i = repeat(eachindex(setup.nH), 1, 2)[:]
+    group = repeat((1:2)', length(setup.nH), 1)[:]
+    barplot!(
+        ax,
+        i,
+        θ;
+        color = colors[group],
+        dodge = group,
+        bar_labels = :y,
+        # label_position = :center,
+        # flip_labels_at=(0.0, 0.0),
+    )
+    # ylims!(ax, relerrs[1].e.classic)
+    ylims!(ax, -0.015, 0.35)
+    labels = ["Classic", "Discrete (ours)"]
+    elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))
+    title = "Smagorinsky coefficient"
+    Legend(
+        fig[0, :],
+        elements,
+        labels;
+        # title;
+        tellwidth = false,
+        orientation = :horizontal,
+        nbanks = 1,
+        framevisible = false,
+    )
+    save("$(plotdir)/burgers_smagorinsky_coefficients.pdf", fig; backend = CairoMakie)
+    fig
+end
+
+let
+    colors = Makie.wong_colors()
+    fig = Figure(; size = (400, 320))
+    ax = Axis(fig[1, 1];
+              # xlabel = "N",
+              ylabel = "Relative Error",
+              xticks = (eachindex(relerrs), map(nH -> "N = $nH", setup.nH)),
+              )
+    for i in eachindex(relerrs)
+        (; nH, e) = relerrs[i]
+        barplot!(
+            ax,
+            fill(i, 2),
+            vcat(e...);
+            color = colors[[1,2]],
+            dodge = [1, 2],
+            bar_labels = :y,
+            # label_position = :center,
+            # flip_labels_at=(0.0, 0.0),
+        )
+    end
+    # ylims!(ax, relerrs[1].e.classic)
+    ylims!(ax, -0.004, 0.077)
+    labels = ["Classic", "Discrete (ours)"]
+    elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))
+    # title = "Smagorinsky coefficient"
+    Legend(
+        fig[0, :],
+        elements,
+        labels;
+        # title;
+        tellwidth = false,
+        orientation = :horizontal,
+        nbanks = 1,
+        framevisible = false,
+    )
+    save("$(plotdir)/burgers_smagorinsky_errors.pdf", fig; backend = CairoMakie)
+    fig
 end
 
 # Write errors to LaTeX table
@@ -184,8 +265,8 @@ let
         c = join(fill("r", length(relerrs[1]) + 1), " ")
         println(io, "\\begin{tabular}{$c}")
         println(io, tab, "\\toprule")
-        keys = [:classic, :swapfil]
-        labels = join(["Classic", "Swap (ours)"], " & ")
+        keys = [:classic, :discret]
+        labels = join(["Classic", "Discrete (ours)"], " & ")
         println(io, tab, "N & $labels \\\\")
         println(io, tab, "\\midrule")
         for (; nH, e) in relerrs
@@ -216,12 +297,12 @@ let
         println(io, "\\begin{tabular}{r r r}")
         println(io, tab, "\\toprule")
         # println(io, tab, "N & \$\\theta_\\text{classic}\$ & \$\\theta_\\text{swap}\$ \\\\")
-        println(io, tab, "N & Classic & Swap (ours) \\\\")
+        println(io, tab, "N & Classic & Discrete (ours) \\\\")
         println(io, tab, "\\midrule")
         for i in eachindex(setup.nH)
             nH = setup.nH[i]
             θc = round(θ_classic[i]; sigdigits = 3)
-            θs = round(θ_swapfil[i]; sigdigits = 3)
+            θs = round(θ_discret[i]; sigdigits = 3)
             println(io, tab, "\$$nH\$ & \$$θc\$ & \$$θs\$ \\\\")
         end
         println(io, tab, "\\bottomrule")
@@ -235,18 +316,18 @@ end
 
 # Compute spectra
 specseries = map(enumerate(setup.nH)) do (i, nH)
-    gh = Grid(setup.L, setup.nh)
-    gH = Grid(setup.L, nH)
+    gh = Burgers.Grid(setup.L, setup.nh)
+    gH = Burgers.Grid(setup.L, nH)
     @show nH
     U = dnsdata[2]
     (; Ubar) = fields[i]
     U_classic = u_classic[i]
-    U_swapfil = u_swapfil[i]
+    U_discret = u_discret[i]
     specfields = (;
         dns_ref = (; u = U, label = "DNS"),
         dns_fil = (; u = Ubar, label = "Filtered DNS"),
         classic = (; u = U_classic, label = "Smagorinsky (classic)"),
-        swapfil = (; u = U_swapfil, label = "Smagorinsky (swap)"),
+        discret = (; u = U_discret, label = "Smagorinsky (discrete)"),
     )
     specs = map(specfields) do (; u, label)
         uhat = rfft(u, 1)
@@ -295,9 +376,9 @@ let
             dns_ref = (; color = :black),
             dns_fil = (; color = Cycled(1)),
             classic = (; color = Cycled(2)),
-            swapfil = (; color = Cycled(3)),
+            discret = (; color = Cycled(3)),
         )
-        for key in [:dns_ref, :dns_fil, :classic, :swapfil]
+        for key in [:dns_ref, :dns_fil, :classic, :discret]
             (; k, e, label) = specs[key]
             # At the end of the spectrum, there are too many points for plotting.
             # Choose a logarithmically equispaced subset of points instead
