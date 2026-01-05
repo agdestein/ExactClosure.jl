@@ -5,7 +5,7 @@ using Random
 u = let
     n = 300
     visc = 3e-4
-    l = 1.0
+    l = 2π
     grid = NS.Grid{2}(l, n)
     backend = NS.KernelAbstractions.CPU()
     poisson = NS.poissonsolver(grid, backend)

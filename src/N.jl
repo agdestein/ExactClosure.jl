@@ -9,7 +9,7 @@ using KernelAbstractions
 using LinearAlgebra
 using Random
 
-get_backend() = CUDA.functional() ? CUDABackend() : KernelAbstractions.CPU()
+defaultbackend() = CUDA.functional() ? CUDABackend() : KernelAbstractions.CPU()
 
 struct Grid{D}
     l::Float64
@@ -91,7 +91,8 @@ stress(u, visc, i, j) =
     end
 
 tensordivergence!(du, σ, doadd) =
-    AK.foreachindex(du[1].data) do ilin
+    # AK.foreachindex(du[1].data) do ilin
+    myforeachindex(du[1].data) do ilin
         @inline
         g = du[1].grid
         D = dim(g)
@@ -127,7 +128,8 @@ tensordivergence!(du, σ, doadd) =
     end
 
 tensordivergence_nonsym!(du, σ, doadd) =
-    AK.foreachindex(du[1].data) do ilin
+    # AK.foreachindex(du[1].data) do ilin
+    myforeachindex(du[1].data) do ilin
         @inline
         g = du[1].grid
         D = dim(g)
@@ -188,8 +190,17 @@ function poissonsolver(grid, backend)
     (; plan, phat)
 end
 
+@kernel inbounds=true unsafe_indices=true function myfor_kernel5(f::F) where {F}
+    i = @index(Global, Linear)
+    f(i)
+end
+
+myforeachindex(f, data) =
+    myfor_kernel5(KernelAbstractions.get_backend(data), 256)(f, ndrange=length(data))
+
 divergence!(d, u) =
-    AK.foreachindex(d.data) do ilin
+    # AK.foreachindex(d.data) do ilin
+    myforeachindex(d.data) do ilin
         @inline
         g = d.grid
         D = dim(g)
@@ -208,7 +219,8 @@ divergence!(d, u) =
     end
 
 pressuregradient!(u, p) =
-    AK.foreachindex(p.data) do ilin
+    # AK.foreachindex(p.data) do ilin
+    myforeachindex(p.data) do ilin
         @inline
         g = p.grid
         D = dim(g)
@@ -240,7 +252,8 @@ function project!(u, p, poisson)
     # Solve for coefficients in Fourier space
     if D == 2
         # @. ahat = 4 / dx(grid)^2 * sinpi(k / n)^2
-        AK.foreachindex(phat) do ilin
+        # AK.foreachindex(phat) do ilin
+        myforeachindex(phat) do ilin
             I = CartesianIndices(size(phat))[ilin]
             h = spacing(g)
             k1 = I[1] - 1 # RFFT wavenumber
@@ -249,7 +262,8 @@ function project!(u, p, poisson)
             phat[I] /= denom
         end
     else
-        AK.foreachindex(phat) do ilin
+        # AK.foreachindex(phat) do ilin
+        myforeachindex(phat) do ilin
             I = CartesianIndices(size(phat))[ilin]
             h = spacing(g)
             k1 = I[1] - 1 # RFFT wavenumber
@@ -278,7 +292,8 @@ end
 function step_forwardeuler!(u, du, p, poisson, visc, dt)
     σ = stresstensor(u, visc)
     tensordivergence!(du, σ, false)
-    AK.foreachindex(u[1].data) do i
+    # AK.foreachindex(u[1].data) do i
+    myforeachindex(u[1].data) do i
         for (u, du) in zip(u, du)
             u[i] += dt * du[i]
         end
@@ -323,7 +338,8 @@ function propose_timestep(u, visc, cfl)
 end
 
 vorticity!(w, u) =
-    AK.foreachindex(w.data) do ilin
+    # AK.foreachindex(w.data) do ilin
+    myforeachindex(w.data) do ilin
         I = linear2cartesian(w.grid, ilin)
         h = spacing(w.grid)
         w[I] = -(u[1][I[1], I[2]+1] - u[1][I[1], I[2]]) / h
@@ -376,7 +392,8 @@ function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwar
 
     # Adjust energy in each partially resolved shell [k, k+1)
     for k = 0:kdiag
-        AK.foreachindex(mask) do ilin
+        # AK.foreachindex(mask) do ilin
+        myforeachindex(mask) do ilin
             D = dim(grid)
             I = CartesianIndices(wavenumbers)[ilin]
             kk = if D == 2
@@ -595,7 +612,8 @@ function applyfilter!(ubar, u, kernel)
     R = map(n -> div(n, 2), size(W)) |> CartesianIndex
     RR = (-R):R
     grid = ubar.grid
-    AK.foreachindex(ubar.data) do ilin
+    # AK.foreachindex(ubar.data) do ilin
+    myforeachindex(ubar.data) do ilin
         @inline
         I = linear2cartesian(grid, ilin)
         s = zero(eltype(ubar))
@@ -627,7 +645,8 @@ function coarsegrain!(ubar, u, stag)
     factor = div(g.n, gbar.n)
     a = div(factor, 2)
     @assert factor * gbar.n == g.n
-    AK.foreachindex(ubar.data) do ilin
+    # AK.foreachindex(ubar.data) do ilin
+    myforeachindex(ubar.data) do ilin
         @inline
         Ibar = linear2cartesian(gbar, ilin)
         I = ntuple(dim(g)) do i
@@ -706,7 +725,8 @@ function dnsaid()
         b
     end
     for i = 1:D
-        AK.foreachindex(u_nomo[i].data) do ilin
+        # AK.foreachindex(u_nomo[i].data) do ilin
+        myforeachindex(u_nomo[i].data) do ilin
             @inline
             u_dnsΔH_concrete[i][ilin] = u_dnsΔH[i][ilin]
         end
@@ -974,7 +994,7 @@ function dnsaid_project()
     n_dns = 250
     n_les = 50
     visc = 3e-4
-    l = 1.0
+    l = 2π
     D = 2
     twarm = 0.1
     tstop = 0.005
@@ -1015,7 +1035,6 @@ function dnsaid_project()
     GΔH = adapt(backend, GΔH)
     GΔHi = adapt(backend, GΔHi)
 
-
     # Position indicators for staggered grid
     faces = ntuple(i -> ntuple(==(i), D), D)
     center = ntuple(Returns(false), D)
@@ -1036,7 +1055,6 @@ function dnsaid_project()
         # DNS stuff
         step_forwardeuler!(u_dns, du_dns, p_dns, poisson_dns, visc, dt)
     end
-
 
     # Initialize LES fields
     for i = 1:D
@@ -1324,15 +1342,15 @@ function plot_spectra(uaid)
     stuff_les = spectral_stuff(g_les, backend)
     spec_dns = spectrum(uaid.u_dns, stuff_dns, poisson_dns)
     spec_les = map([
-        (:u_les     , "Filtered DNS"),
-        (:u_nomo    , "No-model"),
-        (:u_c       , "Classic"),
-        (:u_cf      , "Classic + Flux"),
-        (:u_cfd     , "Classic + Flux + Div"),
-        (:u_cfd_symm, "Classic + Flux + Div (symm)"),
+        (:u_les      , "Filtered DNS"),
+        (:u_nomo     , "No-model"),
+        (:u_c        , "Classic"),
+        (:u_cf       , "Classic + Flux"),
+        (:u_cfd      , "Classic + Flux + Div"),
+        (:u_cfd_symm , "Classic + Flux + Div (symm)"),
     ]) do (key, label)
         s = spectrum(uaid[key], stuff_les, poisson_les)
-            (; s..., label)
+        (; s..., label)
     end
     fig = Figure()
     ax = Axis(fig[1, 1];
