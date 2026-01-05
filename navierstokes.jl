@@ -7,7 +7,7 @@ u = let
     visc = 3e-4
     l = 2π
     grid = NS.Grid{2}(l, n)
-    backend = NS.KernelAbstractions.CPU()
+    backend = NS.get_backend()
     poisson = NS.poissonsolver(grid, backend)
     p = NS.Field(grid, backend)
     # u = NS.Field(grid, backend), NS.Field(grid, backend)
@@ -26,12 +26,12 @@ u = let
     w = NS.Field(grid, backend)
     du = NS.Field(grid, backend), NS.Field(grid, backend)
     u0 = NS.Field(grid, backend), NS.Field(grid, backend)
-    wobs = Makie.Observable(w.data)
+    wobs = Makie.Observable(Array(w.data))
     fig = heatmap(wobs)
     fig |> display
     i = 0
     t = 0.0
-    tmax = 5.0
+    tmax = 0.1
     while t < tmax
         if i > 0 # Skip first step
             dt = NS.propose_timestep(u, visc, 0.5)
@@ -43,7 +43,7 @@ u = let
         if i % 1 == 0
             @show t
             NS.vorticity!(w, u)
-            wobs[] = w.data
+            wobs[] = copyto!(wobs[], w.data)
             # display(fig)
         end
         i += 1
