@@ -1,13 +1,16 @@
+using Adapt
+using CairoMakie
 using ExactClosure: NavierStokes as NS
-using GLMakie
+using JLD2
 using Random
+using Printf
 
 u = let
-    n = 300
-    visc = 3e-4
+    n = 1000
+    visc = 2e-4
     l = 2π
     grid = NS.Grid{2}(l, n)
-    backend = NS.get_backend()
+    backend = NS.defaultbackend()
     poisson = NS.poissonsolver(grid, backend)
     p = NS.Field(grid, backend)
     # u = NS.Field(grid, backend), NS.Field(grid, backend)
@@ -28,10 +31,10 @@ u = let
     u0 = NS.Field(grid, backend), NS.Field(grid, backend)
     wobs = Makie.Observable(Array(w.data))
     fig = heatmap(wobs)
-    fig |> display
+    # fig |> display
     i = 0
     t = 0.0
-    tmax = 0.1
+    tmax = 1.0
     while t < tmax
         if i > 0 # Skip first step
             dt = NS.propose_timestep(u, visc, 0.5)
@@ -48,6 +51,7 @@ u = let
         end
         i += 1
     end
+    save("~/toto.png" |> expanduser, fig)
     u
 end
 
@@ -77,14 +81,13 @@ let
 end
 
 let
-    n = 500
-    # n = size(u[1], 1)
-    dt = 1e-4
-    visc = 3e-4
-    l = 1.0
+    # n = 500
+    n = size(u[1], 1)
+    visc = 2e-4
+    l = 2π
     grid = NS.Grid{2}(l, n)
     h = NS.spacing(grid)
-    backend = NS.KernelAbstractions.CPU()
+    backend = NS.defaultbackend()
     comp = 25
     H = comp * h
     k_th = NS.tophat(grid, comp)
@@ -92,7 +95,7 @@ let
     ki = NS.composekernel(k_th, k_gauss)
     # ki = NS.tophat(grid, comp)
     # ki = NS.gaussian(grid, 2H, 3)
-    kernel = NS.kernelproduct(grid, ntuple(Returns(ki), NS.dim(grid)))
+    kernel = NS.kernelproduct(grid, ntuple(Returns(ki), NS.dim(grid))) |> adapt(backend)
     # let
     #     fig = Figure()
     #     ax = Axis(fig[1, 1]; xlabel = "x / h", ylabel = "Weight")
@@ -105,15 +108,15 @@ let
     profile, args = k -> (k > 0) * k^-3.0, (;)
     poisson = NS.poissonsolver(grid, backend)
     p = NS.Field(grid, backend)
-    u = NS.randomfield(
-        profile,
-        grid,
-        backend,
-        poisson;
-        rng = Xoshiro(0),
-        totalenergy = 1.0,
-        args...,
-    )
+    # u = NS.randomfield(
+    #     profile,
+    #     grid,
+    #     backend,
+    #     poisson;
+    #     rng = Xoshiro(0),
+    #     totalenergy = 1.0,
+    #     args...,
+    # )
     ubar = NS.vectorfield(grid, backend)
     @show eltype(ubar[1])
     for (ubar, u) in zip(ubar, u)
@@ -131,6 +134,7 @@ let
     kkol = [10^1.5, maximum(spec.k)]
     ekol = 1e4 * kkol .^ (-3)
     lines!(ax, kkol, ekol)
+    save("~/toto.png" |> expanduser, fig)
     fig
 end
 
@@ -140,8 +144,15 @@ uaid.u_dns[1] |> heatmap
 uaid.u_nomo[1] |> heatmap
 uaid.u_cfd[1] |> heatmap
 
-uaid = NS.dnsaid()
-uaid = NS.dnsaid_project()
+setup = NS.getsetup()
+
+uaid = NS.dnsaid(setup)
+uaid = NS.dnsaid_project(setup)
+
+let
+    ucpu = adapt(Array, uaid)
+    save_object("uaid.jld2", ucpu)
+end
 
 NS.compute_errors(uaid)
 
@@ -149,3 +160,40 @@ NS.compute_errors(uaid) |> pairs
 
 NS.plot_spectra(uaid)
 
+let
+    errs = NS.compute_errors(uaid)
+    colors = Makie.wong_colors()
+    labels = [
+        "No-model",
+        "Classic",
+        "Classic + Flux",
+        "Classic + Flux + Div (symm)",
+        "Classic + Flux + Div",
+    ]
+    fig = Figure(; size = (500, 400))
+    ax = Axis(fig[1, 1];
+              yticks = (1:5, labels),
+              xlabel = "Relative error",
+              )
+    e = [errs...]
+    group = 1:5
+    bar_labels = map(e) do e
+        @sprintf "%.3g" e
+    end
+    barplot!(
+        ax,
+        group,
+        e;
+        color = colors[group],
+        # bar_labels = :y,
+        bar_labels,
+        # label_position = :center,
+        # flip_labels_at=(0.0, 0.0),
+        #
+        direction=:x,
+    )
+    # ylims!(ax, relerrs[1].e.classic)
+    xlims!(ax, -0.001, 0.015)
+    save("ns-dnsaid-errors.pdf", fig; backend = CairoMakie)
+    fig
+end

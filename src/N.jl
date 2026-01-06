@@ -9,12 +9,16 @@ using KernelAbstractions
 using LinearAlgebra
 using Random
 
+myforeachindex(f, data) = AK.foreachindex(f, data)
+
 defaultbackend() = CUDA.functional() ? CUDABackend() : KernelAbstractions.CPU()
 
 struct Grid{D}
     l::Float64
     n::Int
 end
+
+@inline Grid(::Val{D}, l, n) where {D} = Grid{D}(l, n)
 
 @inline linear2cartesian(g, i) = CartesianIndices(ntuple(Returns(g.n), dim(g)))[i]
 @inline dim(::Grid{D}) where {D} = D
@@ -26,6 +30,9 @@ struct Field{D,A} <: AbstractArray{Float64,D}
     data::A
     function Field(g::Grid, b::Backend)
         data = KernelAbstractions.zeros(b, Float64, ntuple(Returns(g.n), dim(g)))
+        new{dim(g),typeof(data)}(g, data)
+    end
+    function Field(g::Grid, data)
         new{dim(g),typeof(data)}(g, data)
     end
 end
@@ -41,6 +48,9 @@ struct LazyField{F,D,S} <: AbstractArray{Float64,D}
     LazyField(func, grid, stuff...) =
         new{typeof(func),dim(grid),typeof(stuff)}(func, grid, stuff)
 end
+
+Adapt.adapt_structure(to, u::Field) = Field(u.grid, adapt(to, u.data))
+Adapt.adapt_structure(to, u::LazyField) = LazyField(adapt(to, u.func), u.grid, adapt(to, u.stuff)...)
 
 Base.size(u::Field) = ntuple(Returns(u.grid.n), dim(u.grid))
 Base.size(u::LazyField) = ntuple(Returns(u.grid.n), dim(u.grid))
@@ -62,6 +72,19 @@ Base.size(u::LazyField) = ntuple(Returns(u.grid.n), dim(u.grid))
 
 @inline right(I::CartesianIndex, i, r) =
     CartesianIndex(ntuple(j -> ifelse(j == i, I[j] + r, I[j]), length(I.I)))
+
+Base.show(io::IO, u::Field) =
+    print(io, "Field($(u.grid), ::$(typeof(u.data)))")
+Base.show(io::IO, u::LazyField) = print(
+    io,
+    "LazyField(",
+    join((u.func, u.grid, map(s -> "::$(typeof(s))", u.stuff)...), ", ")...,
+    ")",
+)
+Base.show(io::IO, ::MIME"text/plain", u::Field) =
+    print(io, join(map(string, size(u)), "×")..., " ", u)
+Base.show(io::IO, ::MIME"text/plain", u::LazyField) =
+    print(io, join(map(string, size(u)), "×")..., " ", u)
 
 stresstensor(u, visc) =
     if dim(u[1].grid) == 2
@@ -190,17 +213,8 @@ function poissonsolver(grid, backend)
     (; plan, phat)
 end
 
-@kernel inbounds=true unsafe_indices=true function myfor_kernel5(f::F) where {F}
-    i = @index(Global, Linear)
-    f(i)
-end
-
-myforeachindex(f, data) =
-    myfor_kernel5(KernelAbstractions.get_backend(data), 256)(f, ndrange=length(data))
-
 divergence!(d, u) =
-    # AK.foreachindex(d.data) do ilin
-    myforeachindex(d.data) do ilin
+    AK.foreachindex(d.data) do ilin
         @inline
         g = d.grid
         D = dim(g)
@@ -348,6 +362,36 @@ vorticity!(w, u) =
 
 peak_profile(k; kpeak) = k^4 * exp(-2 * (k / kpeak)^2)
 
+@inline function get_wavenumbers(grid)
+    (; n) = grid
+    kmax = div(n, 2)
+    if dim(grid) == 2
+        kmax + 1, n
+    else
+        kmax + 1, n, n
+    end
+end
+
+applymask!(grid, k, Emask, mask, E) =
+    AK.foreachindex(mask) do ilin
+        D = dim(grid)
+        wavenumbers = get_wavenumbers(grid)
+        I = CartesianIndices(wavenumbers)[ilin]
+        kk = if D == 2
+            k1 = I[1] - 1
+            k2 = wavenumber_int(grid, I[2])
+            k1^2 + k2^2
+        else
+            k1 = I[1] - 1
+            k2 = wavenumber_int(grid, I[2])
+            k3 = wavenumber_int(grid, I[3])
+            k1^2 + k2^2 + k3^2
+        end
+        m = k^2 ≤ kk < (k + 1)^2
+        mask[I] = m
+        Emask[I] = m * E[I]
+    end
+
 function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwargs...)
     (; n) = grid
     (; plan) = poisson
@@ -392,24 +436,7 @@ function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwar
 
     # Adjust energy in each partially resolved shell [k, k+1)
     for k = 0:kdiag
-        # AK.foreachindex(mask) do ilin
-        myforeachindex(mask) do ilin
-            D = dim(grid)
-            I = CartesianIndices(wavenumbers)[ilin]
-            kk = if D == 2
-                k1 = I[1] - 1
-                k2 = wavenumber_int(grid, I[2])
-                k1^2 + k2^2
-            else
-                k1 = I[1] - 1
-                k2 = wavenumber_int(grid, I[2])
-                k3 = wavenumber_int(grid, I[3])
-                k1^2 + k2^2 + k3^2
-            end
-            m = k^2 ≤ kk < (k + 1)^2
-            mask[I] = m
-            Emask[I] = m * E[I]
-        end
+        applymask!(grid, k, Emask, mask, E)
         Eshell = sum(Emask) + sum(selectdim(Emask, 1, 2:kmax)) # Current energy in shell
         E0 = totalenergy * profile(k; kwargs...) / totalprofile # Desired energy in shell
         factor = sqrt(E0 / Eshell) # E = u^2 / 2
@@ -670,18 +697,24 @@ function lazycoarsegrain(gbar::Grid, u, stag)
     end
 end
 
-function dnsaid()
-    n_dns = 250
-    n_les = 50
-    visc = 3e-4
-    l = 1.0
-    D = 2
+getsetup() = (;
+    D = Val(2),
+    l = 2π,
+    n_dns = 2700,
+    n_les = 300,
+    visc = 5e-4,
+    Δ_ratio = 2,
+    nσ = 3, # Number of sigmas out in gaussian support
+)
+
+function dnsaid(setup)
+    (; n_dns, n_les, visc, l, D) = setup
     tstop = 0.005
     cfl = 0.45
     profile, args = k -> (k > 0) * k^-3.0, (; totalenergy = 1.0)
     # profile, args = peak_profile, (; totalenergy = 1.0, kpeak = 5)
-    g_dns = Grid{D}(l, n_dns)
-    g_les = Grid{D}(l, n_les)
+    g_dns = Grid(D, l, n_dns)
+    g_les = Grid(D, l, n_les)
     backend = KernelAbstractions.CPU()
 
     # Allocate fields
@@ -990,20 +1023,17 @@ function dnsaid()
     (; u_dns, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
 
-function dnsaid_project()
-    n_dns = 250
-    n_les = 50
-    visc = 3e-4
-    l = 2π
-    D = 2
+function dnsaid_project(setup)
+    (; l, n_dns, n_les, visc, Δ_ratio, nσ) = setup
     twarm = 0.1
-    tstop = 0.005
-    cfl = 0.45
+    tstop = 0.3
+    cfl = 0.15
     profile, args = k -> (k > 0) * k^-3.0, (; totalenergy = 1.0)
     # profile, args = peak_profile, (; totalenergy = 1.0, kpeak = 5)
-    g_dns = Grid{D}(l, n_dns)
-    g_les = Grid{D}(l, n_les)
-    backend = KernelAbstractions.CPU()
+    g_dns = Grid(setup.D, l, n_dns)
+    g_les = Grid(setup.D, l, n_les)
+    D = dim(g_dns)
+    backend = defaultbackend()
 
     # Allocate fields
     poisson_dns = poissonsolver(g_dns, backend)
@@ -1026,7 +1056,8 @@ function dnsaid_project()
     h = spacing(g_dns)
     H = spacing(g_les)
     FH = tophat(g_dns, comp)
-    FΔ = gaussian(g_dns, 2H, 3)
+    Δ = Δ_ratio * H
+    FΔ = gaussian(g_dns, Δ, nσ)
     FΔH = composekernel(FH, FΔ)
     GΔH = kernelproduct(g_dns, ntuple(Returns(FΔH), D))
     GΔHi = ntuple(i -> kernelproduct(g_dns, ntuple(j -> i == j ? FΔ : FΔH, D)), D)
@@ -1317,7 +1348,6 @@ function dnsaid_project()
 end
 
 function compute_errors(uaid)
-    backend = KernelAbstractions.CPU()
     g_dns = uaid.u_dns[1].grid
     g_les = uaid.u_nomo[1].grid
     D = dim(g_dns)
@@ -1332,12 +1362,11 @@ end
 
 function plot_spectra(uaid)
     visc = 3e-4
-    l = 1.0
     g_dns = uaid.u_dns[1].grid
     g_les = uaid.u_les[1].grid
-    poisson_dns = poissonsolver(g_dns, KernelAbstractions.CPU())
-    poisson_les = poissonsolver(g_les, KernelAbstractions.CPU())
-    backend = KernelAbstractions.CPU()
+    backend = defaultbackend()
+    poisson_dns = poissonsolver(g_dns, backend)
+    poisson_les = poissonsolver(g_les, backend)
     stuff_dns = spectral_stuff(g_dns, backend)
     stuff_les = spectral_stuff(g_les, backend)
     spec_dns = spectrum(uaid.u_dns, stuff_dns, poisson_dns)
@@ -1356,12 +1385,13 @@ function plot_spectra(uaid)
     ax = Axis(fig[1, 1];
               xlabel = "k", ylabel = "E(k)",
               xscale = log10, yscale = log10)
-    lines!(ax, spec_dns.k, spec_dns.s; label = "DNS")
+    # lines!(ax, spec_dns.k, spec_dns.s; label = "DNS")
     foreach(s -> lines!(ax, s.k, s.s; s.label), spec_les)
     kkol = [10^1.5, maximum(spec_dns.k)]
     ekol = 1e4 * kkol .^ (-3)
-    lines!(ax, kkol, ekol)
+    # lines!(ax, kkol, ekol)
     Legend(fig[1, 2], ax)
+    save("~/toto.png" |> expanduser, fig)
     fig
 end
 
