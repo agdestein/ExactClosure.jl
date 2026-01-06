@@ -1,13 +1,15 @@
 using Adapt
 using CairoMakie
 using ExactClosure: NavierStokes as NS
+using GLMakie
+using JET
 using JLD2
 using Random
 using Printf
 
 u = let
-    n = 1000
-    visc = 2e-4
+    n = 300
+    visc = 1e-3
     l = 2π
     grid = NS.Grid{2}(l, n)
     backend = NS.defaultbackend()
@@ -31,7 +33,7 @@ u = let
     u0 = NS.Field(grid, backend), NS.Field(grid, backend)
     wobs = Makie.Observable(Array(w.data))
     fig = heatmap(wobs)
-    # fig |> display
+    fig |> display
     i = 0
     t = 0.0
     tmax = 1.0
@@ -51,7 +53,7 @@ u = let
         end
         i += 1
     end
-    save("~/toto.png" |> expanduser, fig)
+    save("toto.png" |> expanduser, fig)
     u
 end
 
@@ -148,6 +150,7 @@ setup = NS.getsetup()
 
 uaid = NS.dnsaid(setup)
 uaid = NS.dnsaid_project(setup)
+@report_opt NS.dnsaid_project(setup)
 
 let
     ucpu = adapt(Array, uaid)
@@ -171,10 +174,7 @@ let
         "Classic + Flux + Div",
     ]
     fig = Figure(; size = (500, 400))
-    ax = Axis(fig[1, 1];
-              yticks = (1:5, labels),
-              xlabel = "Relative error",
-              )
+    ax = Axis(fig[1, 1]; yticks = (1:5, labels), xlabel = "Relative error")
     e = [errs...]
     group = 1:5
     bar_labels = map(e) do e
@@ -190,7 +190,7 @@ let
         # label_position = :center,
         # flip_labels_at=(0.0, 0.0),
         #
-        direction=:x,
+        direction = :x,
     )
     # ylims!(ax, relerrs[1].e.classic)
     xlims!(ax, -0.001, 0.015)

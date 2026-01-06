@@ -175,15 +175,15 @@ relerrs = map(enumerate(setup.nH)) do (i, nH)
     (; nH, e)
 end
 
-
 let
     colors = Makie.wong_colors()
     fig = Figure(; size = (400, 320))
-    ax = Axis(fig[1, 1];
-              # xlabel = "N",
-              ylabel = "Smagorinsky coefficient",
-              xticks = (eachindex(relerrs), map(nH -> "N = $nH", setup.nH)),
-              )
+    ax = Axis(
+        fig[1, 1];
+        # xlabel = "N",
+        ylabel = "Smagorinsky coefficient",
+        xticks = (eachindex(relerrs), map(nH -> "N = $nH", setup.nH)),
+    )
     θ = hcat(θ_classic, θ_discret)[:]
     i = repeat(eachindex(setup.nH), 1, 2)[:]
     group = repeat((1:2)', length(setup.nH), 1)[:]
@@ -219,18 +219,19 @@ end
 let
     colors = Makie.wong_colors()
     fig = Figure(; size = (400, 320))
-    ax = Axis(fig[1, 1];
-              # xlabel = "N",
-              ylabel = "Relative Error",
-              xticks = (eachindex(relerrs), map(nH -> "N = $nH", setup.nH)),
-              )
+    ax = Axis(
+        fig[1, 1];
+        # xlabel = "N",
+        ylabel = "Relative Error",
+        xticks = (eachindex(relerrs), map(nH -> "N = $nH", setup.nH)),
+    )
     for i in eachindex(relerrs)
         (; nH, e) = relerrs[i]
         barplot!(
             ax,
             fill(i, 2),
             vcat(e...);
-            color = colors[[1,2]],
+            color = colors[[1, 2]],
             dodge = [1, 2],
             bar_labels = :y,
             # label_position = :center,

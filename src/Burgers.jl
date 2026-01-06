@@ -1109,7 +1109,6 @@ function plot_fractions(fractions, setup)
 
             # flip_labels_at=(0.0, 0.0),
         )
-
     end
     labels = ["Classic", "Flux", "Div"]
     elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))

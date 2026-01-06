@@ -32,9 +32,7 @@ struct Field{D,A} <: AbstractArray{Float64,D}
         data = KernelAbstractions.zeros(b, Float64, ntuple(Returns(g.n), dim(g)))
         new{dim(g),typeof(data)}(g, data)
     end
-    function Field(g::Grid, data)
-        new{dim(g),typeof(data)}(g, data)
-    end
+    Field(g::Grid, data) = new{dim(g),typeof(data)}(g, data)
 end
 
 vectorfield(g::Grid, b::Backend) = ntuple(i -> Field(g, b), dim(g))
@@ -50,7 +48,8 @@ struct LazyField{F,D,S} <: AbstractArray{Float64,D}
 end
 
 Adapt.adapt_structure(to, u::Field) = Field(u.grid, adapt(to, u.data))
-Adapt.adapt_structure(to, u::LazyField) = LazyField(adapt(to, u.func), u.grid, adapt(to, u.stuff)...)
+Adapt.adapt_structure(to, u::LazyField) =
+    LazyField(adapt(to, u.func), u.grid, adapt(to, u.stuff)...)
 
 Base.size(u::Field) = ntuple(Returns(u.grid.n), dim(u.grid))
 Base.size(u::LazyField) = ntuple(Returns(u.grid.n), dim(u.grid))
@@ -73,8 +72,7 @@ Base.size(u::LazyField) = ntuple(Returns(u.grid.n), dim(u.grid))
 @inline right(I::CartesianIndex, i, r) =
     CartesianIndex(ntuple(j -> ifelse(j == i, I[j] + r, I[j]), length(I.I)))
 
-Base.show(io::IO, u::Field) =
-    print(io, "Field($(u.grid), ::$(typeof(u.data)))")
+Base.show(io::IO, u::Field) = print(io, "Field($(u.grid), ::$(typeof(u.data)))")
 Base.show(io::IO, u::LazyField) = print(
     io,
     "LazyField(",
@@ -114,7 +112,7 @@ stress(u, visc, i, j) =
     end
 
 tensordivergence!(du, σ, doadd) =
-    # AK.foreachindex(du[1].data) do ilin
+# AK.foreachindex(du[1].data) do ilin
     myforeachindex(du[1].data) do ilin
         @inline
         g = du[1].grid
@@ -151,7 +149,7 @@ tensordivergence!(du, σ, doadd) =
     end
 
 tensordivergence_nonsym!(du, σ, doadd) =
-    # AK.foreachindex(du[1].data) do ilin
+# AK.foreachindex(du[1].data) do ilin
     myforeachindex(du[1].data) do ilin
         @inline
         g = du[1].grid
@@ -233,7 +231,7 @@ divergence!(d, u) =
     end
 
 pressuregradient!(u, p) =
-    # AK.foreachindex(p.data) do ilin
+# AK.foreachindex(p.data) do ilin
     myforeachindex(p.data) do ilin
         @inline
         g = p.grid
@@ -352,7 +350,7 @@ function propose_timestep(u, visc, cfl)
 end
 
 vorticity!(w, u) =
-    # AK.foreachindex(w.data) do ilin
+# AK.foreachindex(w.data) do ilin
     myforeachindex(w.data) do ilin
         I = linear2cartesian(w.grid, ilin)
         h = spacing(w.grid)
@@ -700,9 +698,10 @@ end
 getsetup() = (;
     D = Val(2),
     l = 2π,
-    n_dns = 2700,
-    n_les = 300,
-    visc = 5e-4,
+    # n_dns = 2700, n_les = 300, visc = 5e-4,
+    n_dns = 300,
+    n_les = 100,
+    visc = 1e-3,
     Δ_ratio = 2,
     nσ = 3, # Number of sigmas out in gaussian support
 )
@@ -1023,10 +1022,17 @@ function dnsaid(setup)
     (; u_dns, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
 
+get_positions(g::Grid) = (;
+    faces = ntuple(i -> ntuple(==(i), D), D),
+    center = ntuple(Returns(false), D),
+    corner2D = (true, true),
+    corners3D = ((false, true, true), (true, false, true), (true, true, false)),
+)
+
 function dnsaid_project(setup)
     (; l, n_dns, n_les, visc, Δ_ratio, nσ) = setup
     twarm = 0.1
-    tstop = 0.3
+    tstop = 0.01
     cfl = 0.15
     profile, args = k -> (k > 0) * k^-3.0, (; totalenergy = 1.0)
     # profile, args = peak_profile, (; totalenergy = 1.0, kpeak = 5)
@@ -1067,10 +1073,7 @@ function dnsaid_project(setup)
     GΔHi = adapt(backend, GΔHi)
 
     # Position indicators for staggered grid
-    faces = ntuple(i -> ntuple(==(i), D), D)
-    center = ntuple(Returns(false), D)
-    corner2D = (true, true)
-    corners3D = (false, true, true), (true, false, true), (true, true, false)
+    (; faces, center, corner2D, corners3D) = get_positions(g_dns)
 
     # Warmup
     t = 0.0
@@ -1371,20 +1374,18 @@ function plot_spectra(uaid)
     stuff_les = spectral_stuff(g_les, backend)
     spec_dns = spectrum(uaid.u_dns, stuff_dns, poisson_dns)
     spec_les = map([
-        (:u_les      , "Filtered DNS"),
-        (:u_nomo     , "No-model"),
-        (:u_c        , "Classic"),
-        (:u_cf       , "Classic + Flux"),
-        (:u_cfd      , "Classic + Flux + Div"),
-        (:u_cfd_symm , "Classic + Flux + Div (symm)"),
+        (:u_les, "Filtered DNS"),
+        (:u_nomo, "No-model"),
+        (:u_c, "Classic"),
+        (:u_cf, "Classic + Flux"),
+        (:u_cfd, "Classic + Flux + Div"),
+        (:u_cfd_symm, "Classic + Flux + Div (symm)"),
     ]) do (key, label)
         s = spectrum(uaid[key], stuff_les, poisson_les)
         (; s..., label)
     end
     fig = Figure()
-    ax = Axis(fig[1, 1];
-              xlabel = "k", ylabel = "E(k)",
-              xscale = log10, yscale = log10)
+    ax = Axis(fig[1, 1]; xlabel = "k", ylabel = "E(k)", xscale = log10, yscale = log10)
     # lines!(ax, spec_dns.k, spec_dns.s; label = "DNS")
     foreach(s -> lines!(ax, s.k, s.s; s.label), spec_les)
     kkol = [10^1.5, maximum(spec_dns.k)]
