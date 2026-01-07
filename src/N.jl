@@ -5,11 +5,13 @@ using Adapt
 using CairoMakie
 using CUDA
 using FFTW
+using JET
 using KernelAbstractions
 using LinearAlgebra
 using Random
 
-myforeachindex(f, data) = AK.foreachindex(f, data)
+# myforeachindex(f, data) = AK.foreachindex(f, data)
+myforeachindex(f, data) = foreach(f, eachindex(data))
 
 defaultbackend() = CUDA.functional() ? CUDABackend() : KernelAbstractions.CPU()
 
@@ -25,6 +27,7 @@ end
 @inline spacing(g::Grid) = g.l / g.n
 @inline wavenumber_int(g::Grid, i) = i - 1 - ifelse(i <= (g.n + 1) >> 1, 0, g.n)
 
+"Scalar field on grid."
 struct Field{D,A} <: AbstractArray{Float64,D}
     grid::Grid{D}
     data::A
@@ -112,7 +115,6 @@ stress(u, visc, i, j) =
     end
 
 tensordivergence!(du, σ, doadd) =
-# AK.foreachindex(du[1].data) do ilin
     myforeachindex(du[1].data) do ilin
         @inline
         g = du[1].grid
@@ -149,7 +151,6 @@ tensordivergence!(du, σ, doadd) =
     end
 
 tensordivergence_nonsym!(du, σ, doadd) =
-# AK.foreachindex(du[1].data) do ilin
     myforeachindex(du[1].data) do ilin
         @inline
         g = du[1].grid
@@ -212,7 +213,7 @@ function poissonsolver(grid, backend)
 end
 
 divergence!(d, u) =
-    AK.foreachindex(d.data) do ilin
+    myforeachindex(d.data) do ilin
         @inline
         g = d.grid
         D = dim(g)
@@ -231,7 +232,6 @@ divergence!(d, u) =
     end
 
 pressuregradient!(u, p) =
-# AK.foreachindex(p.data) do ilin
     myforeachindex(p.data) do ilin
         @inline
         g = p.grid
@@ -264,7 +264,6 @@ function project!(u, p, poisson)
     # Solve for coefficients in Fourier space
     if D == 2
         # @. ahat = 4 / dx(grid)^2 * sinpi(k / n)^2
-        # AK.foreachindex(phat) do ilin
         myforeachindex(phat) do ilin
             I = CartesianIndices(size(phat))[ilin]
             h = spacing(g)
@@ -274,7 +273,6 @@ function project!(u, p, poisson)
             phat[I] /= denom
         end
     else
-        # AK.foreachindex(phat) do ilin
         myforeachindex(phat) do ilin
             I = CartesianIndices(size(phat))[ilin]
             h = spacing(g)
@@ -304,7 +302,6 @@ end
 function step_forwardeuler!(u, du, p, poisson, visc, dt)
     σ = stresstensor(u, visc)
     tensordivergence!(du, σ, false)
-    # AK.foreachindex(u[1].data) do i
     myforeachindex(u[1].data) do i
         for (u, du) in zip(u, du)
             u[i] += dt * du[i]
@@ -350,7 +347,6 @@ function propose_timestep(u, visc, cfl)
 end
 
 vorticity!(w, u) =
-# AK.foreachindex(w.data) do ilin
     myforeachindex(w.data) do ilin
         I = linear2cartesian(w.grid, ilin)
         h = spacing(w.grid)
@@ -371,7 +367,7 @@ peak_profile(k; kpeak) = k^4 * exp(-2 * (k / kpeak)^2)
 end
 
 applymask!(grid, k, Emask, mask, E) =
-    AK.foreachindex(mask) do ilin
+    myforeachindex(mask) do ilin
         D = dim(grid)
         wavenumbers = get_wavenumbers(grid)
         I = CartesianIndices(wavenumbers)[ilin]
@@ -637,7 +633,6 @@ function applyfilter!(ubar, u, kernel)
     R = map(n -> div(n, 2), size(W)) |> CartesianIndex
     RR = (-R):R
     grid = ubar.grid
-    # AK.foreachindex(ubar.data) do ilin
     myforeachindex(ubar.data) do ilin
         @inline
         I = linear2cartesian(grid, ilin)
@@ -670,7 +665,6 @@ function coarsegrain!(ubar, u, stag)
     factor = div(g.n, gbar.n)
     a = div(factor, 2)
     @assert factor * gbar.n == g.n
-    # AK.foreachindex(ubar.data) do ilin
     myforeachindex(ubar.data) do ilin
         @inline
         Ibar = linear2cartesian(gbar, ilin)
@@ -757,7 +751,6 @@ function dnsaid(setup)
         b
     end
     for i = 1:D
-        # AK.foreachindex(u_nomo[i].data) do ilin
         myforeachindex(u_nomo[i].data) do ilin
             @inline
             u_dnsΔH_concrete[i][ilin] = u_dnsΔH[i][ilin]
@@ -1022,12 +1015,170 @@ function dnsaid(setup)
     (; u_dns, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
 
-get_positions(g::Grid) = (;
-    faces = ntuple(i -> ntuple(==(i), D), D),
-    center = ntuple(Returns(false), D),
-    corner2D = (true, true),
-    corners3D = ((false, true, true), (true, false, true), (true, true, false)),
-)
+function get_positions(g::Grid)
+    D = dim(g)
+    faces = ntuple(i -> ntuple(==(i), D), D)
+    center = ntuple(Returns(false), D)
+    corner2D = (true, true)
+    corners3D = (false, true, true), (true, false, true), (true, true, false)
+    (; faces, center, corner2D, corners3D)
+end
+
+function get_kernels(g_dns, g_les, Δ_ratio, nσ)
+    D = dim(g_dns)
+    comp = div(g_dns.n, g_les.n)
+    h = spacing(g_dns)
+    H = spacing(g_les)
+    FH = tophat(g_dns, comp)
+    Δ = Δ_ratio * H
+    FΔ = gaussian(g_dns, Δ, nσ)
+    FΔH = composekernel(FH, FΔ)
+    GΔH = kernelproduct(g_dns, ntuple(Returns(FΔH), D))
+    GΔHi = ntuple(i -> kernelproduct(g_dns, ntuple(j -> i == j ? FΔ : FΔH, D)), D)
+    (; GΔH, GΔHi)
+end
+
+get_r(σ, p, g) =
+    if dim(g) == 2
+        r11 = LazyField((σ, p, I) -> σ[1][I] + p[I], g, σ, p)
+        r22 = LazyField((σ, p, I) -> σ[2][I] + p[I], g, σ, p)
+        r12 = σ[3]
+        r11, r22, r12
+    else
+        r11 = LazyField((σ, p, I) -> σ[1][I] + p[I], g, σ, p)
+        r22 = LazyField((σ, p, I) -> σ[2][I] + p[I], g, σ, p)
+        r33 = LazyField((σ, p, I) -> σ[3][I] + p[I], g, σ, p)
+        r12 = σ[4]
+        r23 = σ[5]
+        r31 = σ[6]
+        r11, r22, r33, r12, r23, r31
+    end
+
+get_rΔHi(r, GΔHi, g_dns, g_les) =
+    if dim(g_dns) == 2
+        (; center, corner2D) = get_positions(g_dns)
+        r11, r22, r12 = r
+        r11_bar = lazyfilter(r11, GΔHi[1])
+        r21_bar = lazyfilter(r12, GΔHi[1])
+        r12_bar = lazyfilter(r12, GΔHi[2])
+        r22_bar = lazyfilter(r22, GΔHi[2])
+        r11_c = lazycoarsegrain(g_les, r11_bar, center)
+        r21_c = lazycoarsegrain(g_les, r21_bar, corner2D)
+        r12_c = lazycoarsegrain(g_les, r12_bar, corner2D)
+        r22_c = lazycoarsegrain(g_les, r22_bar, center)
+        r11_c, r21_c, r12_c, r22_c
+    else
+        (; center, corners3D) = get_positions(g_dns)
+        r11, r22, r33, r12, r23, r31 = r
+        r11_bar = lazyfilter(r11, GΔHi[1])
+        r21_bar = lazyfilter(r12, GΔHi[1])
+        r31_bar = lazyfilter(r31, GΔHi[1])
+        r12_bar = lazyfilter(r12, GΔHi[2])
+        r22_bar = lazyfilter(r22, GΔHi[2])
+        r32_bar = lazyfilter(r23, GΔHi[2])
+        r13_bar = lazyfilter(r31, GΔHi[3])
+        r23_bar = lazyfilter(r23, GΔHi[3])
+        r33_bar = lazyfilter(r33, GΔHi[3])
+        r11_c = lazycoarsegrain(g_les, r11_bar, center)
+        r21_c = lazycoarsegrain(g_les, r21_bar, corners3D[3])
+        r31_c = lazycoarsegrain(g_les, r31_bar, corners3D[2])
+        r12_c = lazycoarsegrain(g_les, r12_bar, corners3D[3])
+        r22_c = lazycoarsegrain(g_les, r22_bar, center)
+        r32_c = lazycoarsegrain(g_les, r32_bar, corners3D[1])
+        r13_c = lazycoarsegrain(g_les, r13_bar, corners3D[2])
+        r23_c = lazycoarsegrain(g_les, r23_bar, corners3D[1])
+        r33_c = lazycoarsegrain(g_les, r33_bar, center)
+        r11_c, r21_c, r31_c, r12_c, r22_c, r32_c, r13_c, r23_c, r33_c
+    end
+
+symmetrize(σ, g) =
+    if dim(g) == 2
+        σ_11, σ_21, σ_12, σ_22 = σ
+        σ_symm_12 = LazyField((σ21, σ12, I) -> (σ21[I] + σ12[I]) / 2, g, σ_21, σ_12)
+        σ_11, σ_22, σ_symm_12
+    else
+        σ_11, σ_21, σ_31, σ_12, σ_22, σ_32, σ_13, σ_23, σ_33 = σ
+        σ_symm_12 = LazyField((σ21, σ12, I) -> (σ21[I] + σ12[I]) / 2, g, σ_21, σ_12)
+        σ_symm_23 = LazyField((σ32, σ23, I) -> (σ32[I] + σ23[I]) / 2, g, σ_32, σ_23)
+        σ_symm_31 = LazyField((σ31, σ13, I) -> (σ31[I] + σ13[I]) / 2, g, σ_31, σ_13)
+        σ_11, σ_22, σ_33, σ_symm_12, σ_symm_23, σ_symm_31
+    end
+
+get_σΔH(σ, g_dns, g_les, GΔH) =
+    if dim(g_dns) == 2
+        (; center, corner2D) = get_positions(g_dns)
+        σ11, σ22, σ12 = σ
+        σ11_bar = lazyfilter(σ11, GΔH)
+        σ22_bar = lazyfilter(σ22, GΔH)
+        σ12_bar = lazyfilter(σ12, GΔH)
+        σ11_c = lazycoarsegrain(g_les, σ11_bar, center)
+        σ22_c = lazycoarsegrain(g_les, σ22_bar, center)
+        σ12_c = lazycoarsegrain(g_les, σ12_bar, corner2D)
+        σ11_c, σ22_c, σ12_c
+    else
+        (; center, corners3D) = get_positions(g_dns)
+        σ11, σ22, σ33, σ12, σ23, σ31 = σ
+        σ11_bar = lazyfilter(σ11, GΔH)
+        σ22_bar = lazyfilter(σ22, GΔH)
+        σ33_bar = lazyfilter(σ33, GΔH)
+        σ12_bar = lazyfilter(σ12, GΔH)
+        σ23_bar = lazyfilter(σ23, GΔH)
+        σ31_bar = lazyfilter(σ31, GΔH)
+        σ11_c = lazycoarsegrain(g_les, σ11_bar, center)
+        σ22_c = lazycoarsegrain(g_les, σ22_bar, center)
+        σ33_c = lazycoarsegrain(g_les, σ33_bar, center)
+        σ12_c = lazycoarsegrain(g_les, σ12_bar, corners3D[3])
+        σ23_c = lazycoarsegrain(g_les, σ23_bar, corners3D[1])
+        σ31_c = lazycoarsegrain(g_les, σ31_bar, corners3D[2])
+        σ11_c, σ22_c, σ33_c, σ12_c, σ23_c, σ31_c
+    end
+
+lazytensorcoarsegrain(g_les, σ) =
+    if dim(g_les) == 2
+        (; center, corner2D) = get_positions(g_les)
+        σ_11, σ_22, σ_12 = σ
+        σ_11_c = lazycoarsegrain(g_les, σ_11, center)
+        σ_22_c = lazycoarsegrain(g_les, σ_22, center)
+        σ_12_c = lazycoarsegrain(g_les, σ_12, corner2D)
+        σ_11_c, σ_22_c, σ_12_c
+    else
+        (; center, corners3D) = get_positions(g_dns)
+        σ_11, σ_22, σ_33, σ_12, σ_23, σ_31 = σ
+        σ_11_c = lazycoarsegrain(g_les, σ_11, center)
+        σ_22_c = lazycoarsegrain(g_les, σ_22, center)
+        σ_33_c = lazycoarsegrain(g_les, σ_33, center)
+        σ_12_c = lazycoarsegrain(g_les, σ_12, corners3D[3])
+        σ_23_c = lazycoarsegrain(g_les, σ_23, corners3D[1])
+        σ_31_c = lazycoarsegrain(g_les, σ_31, corners3D[2])
+        σ_11_c, σ_22_c, σ_33_c, σ_12_c, σ_23_c, σ_31_c
+    end
+
+function step_ΔHπ_classic!(u_les, u_dns, du, p, poisson, visc, dt, GΔH)
+    g_les = u_les[1].grid
+    g_dns = u_dns[1].grid
+    D = dim(g_dns)
+    σ_dns = stresstensor(u_dns, visc)
+    σΔH = get_σΔH(σ_dns, g_dns, g_les, GΔH)
+    u_dnsΔH = map(u -> lazyfilter(u, GΔH), u_dns)
+    σ_dns2 = stresstensor(u_dnsΔH, visc)
+    σ2 = lazytensorcoarsegrain(g_les, σ_dns2)
+    σ_les = stresstensor(u_les, visc)
+    σ_all = map(
+        (σ_c, σ1, σ2) -> LazyField(
+            (σ_les, σ1, σ2, I) -> σ_les[I] + σ1[I] - σ2[I],
+            g_les,
+            σ_les,
+            σ1,
+            σ2,
+        ),
+        σ_les,
+        σΔH,
+        σ2,
+    )
+    tensordivergence!(du, σ_all, false)
+    project!(du_les, p, poisson)
+    foreach(i -> axpy!(dt, du[i].data, u_les[i].data), 1:D)
+end
 
 function dnsaid_project(setup)
     (; l, n_dns, n_les, visc, Δ_ratio, nσ) = setup
@@ -1058,19 +1209,8 @@ function dnsaid_project(setup)
     u_cfd_symm = vectorfield(g_les, backend)
 
     # Filter kernels
-    comp = div(n_dns, n_les)
-    h = spacing(g_dns)
-    H = spacing(g_les)
-    FH = tophat(g_dns, comp)
-    Δ = Δ_ratio * H
-    FΔ = gaussian(g_dns, Δ, nσ)
-    FΔH = composekernel(FH, FΔ)
-    GΔH = kernelproduct(g_dns, ntuple(Returns(FΔH), D))
-    GΔHi = ntuple(i -> kernelproduct(g_dns, ntuple(j -> i == j ? FΔ : FΔH, D)), D)
-
-    # Put on device
-    GΔH = adapt(backend, GΔH)
-    GΔHi = adapt(backend, GΔHi)
+    kernels = get_kernels(g_dns, g_les, Δ_ratio, nσ) |> adapt(backend)
+    (; GΔH, GΔHi) = kernels
 
     # Position indicators for staggered grid
     (; faces, center, corner2D, corners3D) = get_positions(g_dns)
@@ -1118,128 +1258,11 @@ function dnsaid_project(setup)
         σ_dns = stresstensor(u_dns, visc)
         tensordivergence!(du_dns, σ_dns, false)
         project!(du_dns, p_dns, poisson_dns)
-        r = if D == 2
-            r11 = LazyField((σ_dns, p_dns, I) -> σ_dns[1][I] + p_dns[I], g_dns, σ_dns, p_dns)
-            r22 = LazyField(
-                (σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I],
-                g_dns,
-                σ_dns,
-                p_dns,
-            )
-            r12 = σ_dns[3]
-            r11, r22, r12
-        else
-            r11 = LazyField((σ_dns, p_dns, I) -> σ_dns[1][I] + p_dns[I], g_dns, σ_dns, p_dns)
-            r22 = LazyField(
-                (σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I],
-                g_dns,
-                σ_dns,
-                p_dns,
-            )
-            r33 = LazyField(
-                (σ_dns, p_dns, I) -> σ_dns[3][I] + p_dns[I],
-                g_dns,
-                σ_dns,
-                p_dns,
-            )
-            r12 = σ_dns[4]
-            r23 = σ_dns[5]
-            r31 = σ_dns[6]
-            r11, r22, r33, r12, r23, r31
-        end
+        r = get_r(σ_dns, p_dns, g_dns)
+        rΔHi = get_rΔHi(r, GΔHi, g_dns, g_les)
+        rΔHi_symm = symmetrize(rΔHi, g_les)
 
-        rΔHi = if D == 2
-            r11, r22, r12 = r
-            r11_bar = lazyfilter(r11, GΔHi[1])
-            r21_bar = lazyfilter(r12, GΔHi[1])
-            r12_bar = lazyfilter(r12, GΔHi[2])
-            r22_bar = lazyfilter(r22, GΔHi[2])
-            r11_c = lazycoarsegrain(g_les, r11_bar, center)
-            r21_c = lazycoarsegrain(g_les, r21_bar, corner2D)
-            r12_c = lazycoarsegrain(g_les, r12_bar, corner2D)
-            r22_c = lazycoarsegrain(g_les, r22_bar, center)
-            r11_c, r21_c, r12_c, r22_c
-        else
-            r11, r22, r33, r12, r23, r31 = r
-            r11_bar = lazyfilter(r11, GΔHi[1])
-            r21_bar = lazyfilter(r12, GΔHi[1])
-            r31_bar = lazyfilter(r31, GΔHi[1])
-            r12_bar = lazyfilter(r12, GΔHi[2])
-            r22_bar = lazyfilter(r22, GΔHi[2])
-            r32_bar = lazyfilter(r23, GΔHi[2])
-            r13_bar = lazyfilter(r31, GΔHi[3])
-            r23_bar = lazyfilter(r23, GΔHi[3])
-            r33_bar = lazyfilter(r33, GΔHi[3])
-            r11_c = lazycoarsegrain(g_les, r11_bar, center)
-            r21_c = lazycoarsegrain(g_les, r21_bar, corners3D[3])
-            r31_c = lazycoarsegrain(g_les, r31_bar, corners3D[2])
-            r12_c = lazycoarsegrain(g_les, r12_bar, corners3D[3])
-            r22_c = lazycoarsegrain(g_les, r22_bar, center)
-            r32_c = lazycoarsegrain(g_les, r32_bar, corners3D[1])
-            r13_c = lazycoarsegrain(g_les, r13_bar, corners3D[2])
-            r23_c = lazycoarsegrain(g_les, r23_bar, corners3D[1])
-            r33_c = lazycoarsegrain(g_les, r33_bar, center)
-            r11_c, r21_c, r31_c, r12_c, r22_c, r32_c, r13_c, r23_c, r33_c
-        end
-
-        rΔHi_symm = if D == 2
-            rΔHi_11, rΔHi_21, rΔHi_12, rΔHi_22 = rΔHi
-            rΔHi_symm_12 = LazyField(
-                (r21, r12, I) -> (r21[I] + r12[I]) / 2,
-                g_les,
-                rΔHi_21,
-                rΔHi_12,
-            )
-            rΔHi_11, rΔHi_22, rΔHi_symm_12
-        else
-            rΔHi_11, rΔHi_21, rΔHi_31, rΔHi_12, rΔHi_22, rΔHi_32, rΔHi_13, rΔHi_23, rΔHi_33 = rΔHi
-            rΔHi_symm_12 = LazyField(
-                (r21, r12, I) -> (r21[I] + r12[I]) / 2,
-                g_les,
-                rΔHi_21,
-                rΔHi_12,
-            )
-            rΔHi_symm_23 = LazyField(
-                (r32, r23, I) -> (r32[I] + r23[I]) / 2,
-                g_les,
-                rΔHi_32,
-                rΔHi_23,
-            )
-            rΔHi_symm_31 = LazyField(
-                (r31, r13, I) -> (r31[I] + r13[I]) / 2,
-                g_les,
-                rΔHi_31,
-                rΔHi_13,
-            )
-            rΔHi_11, rΔHi_22, rΔHi_33, rΔHi_symm_12, rΔHi_symm_23, rΔHi_symm_31
-        end
-
-        σΔH = if D == 2
-            σ11, σ22, σ12 = σ_dns
-            σ11_bar = lazyfilter(σ11, GΔH)
-            σ22_bar = lazyfilter(σ22, GΔH)
-            σ12_bar = lazyfilter(σ12, GΔH)
-            σ11_c = lazycoarsegrain(g_les, σ11_bar, center)
-            σ22_c = lazycoarsegrain(g_les, σ22_bar, center)
-            σ12_c = lazycoarsegrain(g_les, σ12_bar, corner2D)
-            σ11_c, σ22_c, σ12_c
-        else
-            σ11, σ22, σ33, σ12, σ23, σ31 = σ_dns
-            σ11_bar = lazyfilter(σ11, GΔH)
-            σ22_bar = lazyfilter(σ22, GΔH)
-            σ33_bar = lazyfilter(σ33, GΔH)
-            σ12_bar = lazyfilter(σ12, GΔH)
-            σ23_bar = lazyfilter(σ23, GΔH)
-            σ31_bar = lazyfilter(σ31, GΔH)
-            σ11_c = lazycoarsegrain(g_les, σ11_bar, center)
-            σ22_c = lazycoarsegrain(g_les, σ22_bar, center)
-            σ33_c = lazycoarsegrain(g_les, σ33_bar, center)
-            σ12_c = lazycoarsegrain(g_les, σ12_bar, corners3D[3])
-            σ23_c = lazycoarsegrain(g_les, σ23_bar, corners3D[1])
-            σ31_c = lazycoarsegrain(g_les, σ31_bar, corners3D[2])
-            σ11_c, σ22_c, σ33_c, σ12_c, σ23_c, σ31_c
-        end
-
+        σΔH = get_σΔH(σ_dns, g_dns, g_les, GΔH)
         u_dnsΔH = map(u -> lazyfilter(u, GΔH), u_dns)
 
         # Filter
@@ -1250,29 +1273,11 @@ function dnsaid_project(setup)
         project!(ubar_coarse, p_les, poisson_les)
 
         # No-model
-        σ_nomo = stresstensor(u_nomo, visc)
-        tensordivergence!(du_les, σ_nomo, false)
-        project!(du_les, p_les, poisson_les)
-        foreach(i -> axpy!(dt, du_les[i].data, u_nomo[i].data), 1:D)
+        step_forwardeuler!(u_nomo, du_les, p_les, poisson_les, visc, dt)
 
         # Classic
         σ_dns2 = stresstensor(u_dnsΔH, visc)
-        σ2 = if D == 2
-            σ2_11, σ2_22, σ2_12 = σ_dns2
-            σ2_11_c = lazycoarsegrain(g_les, σ2_11, center)
-            σ2_22_c = lazycoarsegrain(g_les, σ2_22, center)
-            σ2_12_c = lazycoarsegrain(g_les, σ2_12, corner2D)
-            σ2_11_c, σ2_22_c, σ2_12_c
-        else
-            σ2_11, σ2_22, σ2_33, σ2_12, σ2_23, σ2_31 = σ_dns2
-            σ2_11_c = lazycoarsegrain(g_les, σ2_11, center)
-            σ2_22_c = lazycoarsegrain(g_les, σ2_22, center)
-            σ2_33_c = lazycoarsegrain(g_les, σ2_33, center)
-            σ2_12_c = lazycoarsegrain(g_les, σ2_12, corners3D[3])
-            σ2_23_c = lazycoarsegrain(g_les, σ2_23, corners3D[1])
-            σ2_31_c = lazycoarsegrain(g_les, σ2_31, corners3D[2])
-            σ2_11_c, σ2_22_c, σ2_33_c, σ2_12_c, σ2_23_c, σ2_31_c
-        end
+        σ2 = lazytensorcoarsegrain(g_les, σ_dns2)
         σ_c = stresstensor(u_c, visc)
         σ_all = map(
             (σ_c, σ1, σ2) -> LazyField(
