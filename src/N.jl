@@ -10,8 +10,8 @@ using KernelAbstractions
 using LinearAlgebra
 using Random
 
-# myforeachindex(f, data) = AK.foreachindex(f, data)
-myforeachindex(f, data) = foreach(f, eachindex(data))
+myforeachindex(f, data) = AK.foreachindex(f, data)
+# myforeachindex(f, data) = foreach(f, eachindex(data))
 
 defaultbackend() = CUDA.functional() ? CUDABackend() : KernelAbstractions.CPU()
 
@@ -28,26 +28,26 @@ end
 @inline wavenumber_int(g::Grid, i) = i - 1 - ifelse(i <= (g.n + 1) >> 1, 0, g.n)
 
 "Scalar field on grid."
-struct Field{D,A} <: AbstractArray{Float64,D}
+struct Field{D, A} <: AbstractArray{Float64, D}
     grid::Grid{D}
     data::A
-    function Field(g::Grid, b::Backend)
+    Field(g::Grid, b::Backend) = let
         data = KernelAbstractions.zeros(b, Float64, ntuple(Returns(g.n), dim(g)))
-        new{dim(g),typeof(data)}(g, data)
+        new{dim(g), typeof(data)}(g, data)
     end
-    Field(g::Grid, data) = new{dim(g),typeof(data)}(g, data)
+    Field(g::Grid, data) = new{dim(g), typeof(data)}(g, data)
 end
 
-vectorfield(g::Grid, b::Backend) = ntuple(i -> Field(g, b), dim(g))
-tensorfield(g::Grid{2}, b::Backend) = ntuple(i -> Field(g, b), 3)
-tensorfield(g::Grid{3}, b::Backend) = ntuple(i -> Field(g, b), 6)
+vectorfield(g::Grid, b::Backend) = ntuple(_ -> Field(g, b), dim(g))
+tensorfield(g::Grid{2}, b::Backend) = ntuple(_ -> Field(g, b), 3)
+tensorfield(g::Grid{3}, b::Backend) = ntuple(_ -> Field(g, b), 6)
 
-struct LazyField{F,D,S} <: AbstractArray{Float64,D}
+struct LazyField{F, D, S} <: AbstractArray{Float64, D}
     func::F
     grid::Grid{D}
     stuff::S
     LazyField(func, grid, stuff...) =
-        new{typeof(func),dim(grid),typeof(stuff)}(func, grid, stuff)
+        new{typeof(func), dim(grid), typeof(stuff)}(func, grid, stuff)
 end
 
 Adapt.adapt_structure(to, u::Field) = Field(u.grid, adapt(to, u.data))
@@ -57,19 +57,19 @@ Adapt.adapt_structure(to, u::LazyField) =
 Base.size(u::Field) = ntuple(Returns(u.grid.n), dim(u.grid))
 Base.size(u::LazyField) = ntuple(Returns(u.grid.n), dim(u.grid))
 
-@inline Base.getindex(u::Field{2}, I::Vararg{Int,2}) =
+@inline Base.getindex(u::Field{2}, I::Vararg{Int, 2}) =
     getindex(u.data, map(i -> mod1(i, u.grid.n), I)...)
-@inline Base.getindex(u::Field{3}, I::Vararg{Int,3}) =
+@inline Base.getindex(u::Field{3}, I::Vararg{Int, 3}) =
     getindex(u.data, map(i -> mod1(i, u.grid.n), I)...)
 
-@inline Base.getindex(u::LazyField{F,2}, I::Vararg{Int,2}) where {F} =
+@inline Base.getindex(u::LazyField{F, 2}, I::Vararg{Int, 2}) where {F} =
     u.func(u.stuff..., CartesianIndex(I))
-@inline Base.getindex(u::LazyField{F,3}, I::Vararg{Int,3}) where {F} =
+@inline Base.getindex(u::LazyField{F, 3}, I::Vararg{Int, 3}) where {F} =
     u.func(u.stuff..., CartesianIndex(I))
 
-@inline Base.setindex!(u::Field{2}, val, I::Vararg{Int,2}) =
+@inline Base.setindex!(u::Field{2}, val, I::Vararg{Int, 2}) =
     setindex!(u.data, val, map(i -> mod1(i, u.grid.n), I)...)
-@inline Base.setindex!(u::Field{3}, val, I::Vararg{Int,3}) =
+@inline Base.setindex!(u::Field{3}, val, I::Vararg{Int, 3}) =
     setindex!(u.data, val, map(i -> mod1(i, u.grid.n), I)...)
 
 @inline right(I::CartesianIndex, i, r) =
@@ -88,110 +88,107 @@ Base.show(io::IO, ::MIME"text/plain", u::LazyField) =
     print(io, join(map(string, size(u)), "×")..., " ", u)
 
 stresstensor(u, visc) =
-    if dim(u[1].grid) == 2
-        stress(u, visc, 1, 1), stress(u, visc, 2, 2), stress(u, visc, 1, 2)
-    else
-        stress(u, visc, 1, 1),
+if dim(u[1].grid) == 2
+    stress(u, visc, 1, 1), stress(u, visc, 2, 2), stress(u, visc, 1, 2)
+else
+    stress(u, visc, 1, 1),
         stress(u, visc, 2, 2),
         stress(u, visc, 3, 3),
         stress(u, visc, 1, 2),
         stress(u, visc, 2, 3),
         stress(u, visc, 3, 1)
-    end
+end
 
-stress(u, visc, i, j) =
-    LazyField(u[1].grid, u, visc, i, j) do u, visc, i, j, I
-        @inline
-        h = spacing(u[1].grid)
-        ui_rightj = u[i][right(I, j, i != j)]
-        ui_leftj = u[i][right(I, j, (i != j) - 1)]
-        uj_righti = u[j][right(I, i, j != i)]
-        uj_lefti = u[j][right(I, i, (j != i) - 1)]
-        etaj_ui = (ui_rightj + ui_leftj) / 2
-        etai_uj = (uj_righti + uj_lefti) / 2
-        dj_ui = (ui_rightj - ui_leftj) / h
-        di_uj = (uj_righti - uj_lefti) / h
-        etaj_ui * etai_uj - visc * (dj_ui + di_uj)
-    end
+stress(u, visc, i, j) = LazyField(u[1].grid, u, visc, i, j) do u, visc, i, j, I
+    @inline
+    h = spacing(u[1].grid)
+    ui_rightj = u[i][right(I, j, i != j)]
+    ui_leftj = u[i][right(I, j, (i != j) - 1)]
+    uj_righti = u[j][right(I, i, j != i)]
+    uj_lefti = u[j][right(I, i, (j != i) - 1)]
+    etaj_ui = (ui_rightj + ui_leftj) / 2
+    etai_uj = (uj_righti + uj_lefti) / 2
+    dj_ui = (ui_rightj - ui_leftj) / h
+    di_uj = (uj_righti - uj_lefti) / h
+    etaj_ui * etai_uj - visc * (dj_ui + di_uj)
+end
 
-tensordivergence!(du, σ, doadd) =
-    myforeachindex(du[1].data) do ilin
-        @inline
-        g = du[1].grid
-        D = dim(g)
-        h = spacing(g)
-        I = linear2cartesian(g, ilin)
-        if D == 2
-            σ11, σ22, σ12 = σ
-            du1, du2 = du
-            I1, I2 = I.I
-            du1[I] =
-                doadd * du1[I] - (σ11[I1+1, I2] - σ11[I1, I2]) / h -
-                (σ12[I1, I2] - σ12[I1, I2-1]) / h
-            du2[I] =
-                doadd * du2[I] - (σ12[I1, I2] - σ12[I1-1, I2]) / h -
-                (σ22[I1, I2+1] - σ22[I1, I2]) / h
-        else
-            σ11, σ22, σ33, σ12, σ23, σ31 = σ
-            du1, du2, du3 = du
-            I1, I2, I3 = I.I
-            du1[I] =
-                doadd * du1[I] - (σ11[I1+1, I2, I3] - σ11[I1, I2, I3]) / h -
-                (σ12[I1, I2+1, I3] - σ12[I1, I2, I3]) / h -
-                (σ31[I1, I2, I3+1] - σ31[I1, I2, I3]) / h
-            du2[I] =
-                doadd * du2[I] - (σ12[I1+1, I2, I3] - σ12[I1, I2, I3]) / h -
-                (σ22[I1, I2+1, I3] - σ22[I1, I2, I3]) / h -
-                (σ23[I1, I2, I3+1] - σ23[I1, I2, I3]) / h
-            du3[I] =
-                doadd * du3[I] - (σ31[I1+1, I2, I3] - σ31[I1, I2, I3]) / h -
-                (σ23[I1, I2+1, I3] - σ23[I1, I2, I3]) / h -
-                (σ33[I1, I2, I3+1] - σ33[I1, I2, I3]) / h
-        end
+tensordivergence!(du, σ, doadd) = myforeachindex(du[1].data) do ilin
+    @inline
+    g = du[1].grid
+    D = dim(g)
+    h = spacing(g)
+    I = linear2cartesian(g, ilin)
+    if D == 2
+        σ11, σ22, σ12 = σ
+        du1, du2 = du
+        I1, I2 = I.I
+        du1[I] =
+            doadd * du1[I] - (σ11[I1 + 1, I2] - σ11[I1, I2]) / h -
+            (σ12[I1, I2] - σ12[I1, I2 - 1]) / h
+        du2[I] =
+            doadd * du2[I] - (σ12[I1, I2] - σ12[I1 - 1, I2]) / h -
+            (σ22[I1, I2 + 1] - σ22[I1, I2]) / h
+    else
+        σ11, σ22, σ33, σ12, σ23, σ31 = σ
+        du1, du2, du3 = du
+        I1, I2, I3 = I.I
+        du1[I] =
+            doadd * du1[I] - (σ11[I1 + 1, I2, I3] - σ11[I1, I2, I3]) / h -
+            (σ12[I1, I2 + 1, I3] - σ12[I1, I2, I3]) / h -
+            (σ31[I1, I2, I3 + 1] - σ31[I1, I2, I3]) / h
+        du2[I] =
+            doadd * du2[I] - (σ12[I1 + 1, I2, I3] - σ12[I1, I2, I3]) / h -
+            (σ22[I1, I2 + 1, I3] - σ22[I1, I2, I3]) / h -
+            (σ23[I1, I2, I3 + 1] - σ23[I1, I2, I3]) / h
+        du3[I] =
+            doadd * du3[I] - (σ31[I1 + 1, I2, I3] - σ31[I1, I2, I3]) / h -
+            (σ23[I1, I2 + 1, I3] - σ23[I1, I2, I3]) / h -
+            (σ33[I1, I2, I3 + 1] - σ33[I1, I2, I3]) / h
     end
+end
 
-tensordivergence_nonsym!(du, σ, doadd) =
-    myforeachindex(du[1].data) do ilin
-        @inline
-        g = du[1].grid
-        D = dim(g)
-        h = spacing(g)
-        I = linear2cartesian(g, ilin)
-        if D == 2
-            σ11, σ21, σ12, σ22 = σ
-            du1, du2 = du
-            I1, I2 = I.I
-            du1[I] =
-                doadd * du1[I] - #
-                (σ11[I1+1, I2] - σ11[I1, I2]) / h - #
-                (σ12[I1, I2] - σ12[I1, I2-1]) / h
-            du2[I] =
-                doadd * du2[I] - #
-                (σ21[I1, I2] - σ21[I1-1, I2]) / h - #
-                (σ22[I1, I2+1] - σ22[I1, I2]) / h
-        else
-            σ11, σ21, σ31, σ12, σ22, σ32, σ13, σ23, σ33 = σ
-            du1, du2, du3 = du
-            I1, I2, I3 = I.I
-            du1[I] =
-                doadd * du1[I] - #
-                (σ11[I1+1, I2, I3] - σ11[I1, I2, I3]) / h -
-                (σ12[I1, I2+1, I3] - σ12[I1, I2, I3]) / h -
-                (σ13[I1, I2, I3+1] - σ13[I1, I2, I3]) / h
-            du2[I] =
-                doadd * du2[I] - #
-                (σ21[I1+1, I2, I3] - σ21[I1, I2, I3]) / h -
-                (σ22[I1, I2+1, I3] - σ22[I1, I2, I3]) / h -
-                (σ23[I1, I2, I3+1] - σ23[I1, I2, I3]) / h
-            du3[I] =
-                doadd * du3[I] - #
-                (σ31[I1+1, I2, I3] - σ31[I1, I2, I3]) / h -
-                (σ32[I1, I2+1, I3] - σ32[I1, I2, I3]) / h -
-                (σ33[I1, I2, I3+1] - σ33[I1, I2, I3]) / h
-        end
+tensordivergence_nonsym!(du, σ, doadd) = myforeachindex(du[1].data) do ilin
+    @inline
+    g = du[1].grid
+    D = dim(g)
+    h = spacing(g)
+    I = linear2cartesian(g, ilin)
+    if D == 2
+        σ11, σ21, σ12, σ22 = σ
+        du1, du2 = du
+        I1, I2 = I.I
+        du1[I] =
+            doadd * du1[I] -
+            (σ11[I1 + 1, I2] - σ11[I1, I2]) / h -
+            (σ12[I1, I2] - σ12[I1, I2 - 1]) / h
+        du2[I] =
+            doadd * du2[I] -
+            (σ21[I1, I2] - σ21[I1 - 1, I2]) / h -
+            (σ22[I1, I2 + 1] - σ22[I1, I2]) / h
+    else
+        σ11, σ21, σ31, σ12, σ22, σ32, σ13, σ23, σ33 = σ
+        du1, du2, du3 = du
+        I1, I2, I3 = I.I
+        du1[I] =
+            doadd * du1[I] -
+            (σ11[I1 + 1, I2, I3] - σ11[I1, I2, I3]) / h -
+            (σ12[I1, I2 + 1, I3] - σ12[I1, I2, I3]) / h -
+            (σ13[I1, I2, I3 + 1] - σ13[I1, I2, I3]) / h
+        du2[I] =
+            doadd * du2[I] -
+            (σ21[I1 + 1, I2, I3] - σ21[I1, I2, I3]) / h -
+            (σ22[I1, I2 + 1, I3] - σ22[I1, I2, I3]) / h -
+            (σ23[I1, I2, I3 + 1] - σ23[I1, I2, I3]) / h
+        du3[I] =
+            doadd * du3[I] -
+            (σ31[I1 + 1, I2, I3] - σ31[I1, I2, I3]) / h -
+            (σ32[I1, I2 + 1, I3] - σ32[I1, I2, I3]) / h -
+            (σ33[I1, I2, I3 + 1] - σ33[I1, I2, I3]) / h
     end
+end
 
-function poissonsolver(grid, backend)
+poissonsolver(grid, backend) = let
     (; n) = grid
 
     D = dim(grid)
@@ -211,43 +208,41 @@ function poissonsolver(grid, backend)
     (; plan, p, phat)
 end
 
-divergence!(d, u) =
-    myforeachindex(d.data) do ilin
-        @inline
-        g = d.grid
-        D = dim(g)
-        h = spacing(g)
-        I = linear2cartesian(g, ilin)
-        if D == 2
-            d[I] =
-                (u[1][I[1], I[2]] - u[1][I[1]-1, I[2]]) / h +
-                (u[2][I[1], I[2]] - u[2][I[1], I[2]-1]) / h
-        elseif D == 3
-            d[I] =
-                (u[1][I[1], I[2], I[3]] - u[1][I[1]-1, I[2], I[3]]) / h +
-                (u[2][I[1], I[2], I[3]] - u[2][I[1], I[2]-1, I[3]]) / h +
-                (u[3][I[1], I[2], I[3]] - u[3][I[1], I[2], I[3]-1]) / h
-        end
+divergence!(d, u) = myforeachindex(d.data) do ilin
+    @inline
+    g = d.grid
+    D = dim(g)
+    h = spacing(g)
+    I = linear2cartesian(g, ilin)
+    if D == 2
+        d[I] =
+            (u[1][I[1], I[2]] - u[1][I[1] - 1, I[2]]) / h +
+            (u[2][I[1], I[2]] - u[2][I[1], I[2] - 1]) / h
+    elseif D == 3
+        d[I] =
+            (u[1][I[1], I[2], I[3]] - u[1][I[1] - 1, I[2], I[3]]) / h +
+            (u[2][I[1], I[2], I[3]] - u[2][I[1], I[2] - 1, I[3]]) / h +
+            (u[3][I[1], I[2], I[3]] - u[3][I[1], I[2], I[3] - 1]) / h
     end
+end
 
-pressuregradient!(u, p) =
-    myforeachindex(p.data) do ilin
-        @inline
-        g = p.grid
-        D = dim(g)
-        h = spacing(g)
-        I = linear2cartesian(g, ilin)
-        if D == 2
-            u[1][I] -= (p[I[1]+1, I[2]] - p[I[1], I[2]]) / h
-            u[2][I] -= (p[I[1], I[2]+1] - p[I[1], I[2]]) / h
-        else
-            u[1][I] -= (p[I[1]+1, I[2], I[3]] - p[I[1], I[2], I[3]]) / h
-            u[2][I] -= (p[I[1], I[2]+1, I[3]] - p[I[1], I[2], I[3]]) / h
-            u[3][I] -= (p[I[1], I[2], I[3]+1] - p[I[1], I[2], I[3]]) / h
-        end
+pressuregradient!(u, p) = myforeachindex(p.data) do ilin
+    @inline
+    g = p.grid
+    D = dim(g)
+    h = spacing(g)
+    I = linear2cartesian(g, ilin)
+    if D == 2
+        u[1][I] -= (p[I[1] + 1, I[2]] - p[I[1], I[2]]) / h
+        u[2][I] -= (p[I[1], I[2] + 1] - p[I[1], I[2]]) / h
+    else
+        u[1][I] -= (p[I[1] + 1, I[2], I[3]] - p[I[1], I[2], I[3]]) / h
+        u[2][I] -= (p[I[1], I[2] + 1, I[3]] - p[I[1], I[2], I[3]]) / h
+        u[3][I] -= (p[I[1], I[2], I[3] + 1] - p[I[1], I[2], I[3]]) / h
     end
+end
 
-function project!(u, poisson)
+project!(u, poisson) = let
     (; plan, p, phat) = poisson
     g = p.grid
     D = dim(g)
@@ -278,7 +273,9 @@ function project!(u, poisson)
             k1 = I[1] - 1 # RFFT wavenumber
             k2 = wavenumber_int(g, I[2]) # FFT wavenumber
             k3 = wavenumber_int(g, I[3]) # FFT wavenumber
-            denom = -4 / h^2 * (sinpi(k1 / g.n)^2 + sinpi(k2 / g.n)^2 + sinpi(k3 / g.n)^2) # Finite difference Laplacian in Fourier space
+            denom = -4 / h^2 * (
+                sinpi(k1 / g.n)^2 + sinpi(k2 / g.n)^2 + sinpi(k3 / g.n)^2
+            ) # Finite difference Laplacian in Fourier space
             phat[I] /= denom
         end
     end
@@ -298,7 +295,7 @@ function project!(u, poisson)
     u
 end
 
-function step_forwardeuler!(u, du, poisson, visc, dt)
+step_forwardeuler!(u, du, poisson, visc, dt) = let
     σ = stresstensor(u, visc)
     tensordivergence!(du, σ, false)
     myforeachindex(u[1].data) do i
@@ -309,7 +306,7 @@ function step_forwardeuler!(u, du, poisson, visc, dt)
     project!(u, poisson)
 end
 
-function step_wray3!(u, du, u0, poisson, visc, dt)
+step_wray3!(u, du, u0, poisson, visc, dt) = let
     a = 8 / 15, 5 / 12, 3 / 4
     b = 1 / 4, 0 / 1
     c = 0 / 1, 8 / 15, 2 / 3
@@ -319,7 +316,7 @@ function step_wray3!(u, du, u0, poisson, visc, dt)
         copyto!(u0.data, u.data)
     end
 
-    for i = 1:nstage
+    for i in 1:nstage
         σ = stresstensor(u, visc)
         tensordivergence!(du, σ, false)
 
@@ -337,7 +334,7 @@ function step_wray3!(u, du, u0, poisson, visc, dt)
     end
 end
 
-function propose_timestep(u, visc, cfl)
+propose_timestep(u, visc, cfl) = let
     h = spacing(u[1].grid)
     umax = maximum(u -> maximum(abs, u.data), u)
     dt_adv = cfl * h / umax
@@ -345,54 +342,54 @@ function propose_timestep(u, visc, cfl)
     min(dt_adv, dt_visc)
 end
 
-vorticity!(w, u) =
-    myforeachindex(w.data) do ilin
-        I = linear2cartesian(w.grid, ilin)
-        h = spacing(w.grid)
-        w[I] = -(u[1][I[1], I[2]+1] - u[1][I[1], I[2]]) / h
-        +(u[2][I[1]+1, I[2]] - u[2][I[1], I[2]]) / h
-    end
+vorticity!(w, u) = myforeachindex(w.data) do ilin
+    I = linear2cartesian(w.grid, ilin)
+    h = spacing(w.grid)
+    w[I] =
+        (u[2][I[1] + 1, I[2]] - u[2][I[1], I[2]]) / h -
+        (u[1][I[1], I[2] + 1] - u[1][I[1], I[2]]) / h
+end
 
 peak_profile(k; kpeak) = k^4 * exp(-2 * (k / kpeak)^2)
 
-@inline function get_wavenumbers(grid)
-    (; n) = grid
-    kmax = div(n, 2)
-    if dim(grid) == 2
-        kmax + 1, n
-    else
-        kmax + 1, n, n
-    end
+@inline get_wavenumbers(g::Grid) =
+if dim(g) == 2
+    div(g.n, 2) + 1, g.n
+else
+    div(g.n, 2) + 1, g.n, g.n
 end
 
-applymask!(grid, k, Emask, mask, E) =
-    myforeachindex(mask) do ilin
-        D = dim(grid)
-        wavenumbers = get_wavenumbers(grid)
-        I = CartesianIndices(wavenumbers)[ilin]
-        kk = if D == 2
-            k1 = I[1] - 1
-            k2 = wavenumber_int(grid, I[2])
-            k1^2 + k2^2
-        else
-            k1 = I[1] - 1
-            k2 = wavenumber_int(grid, I[2])
-            k3 = wavenumber_int(grid, I[3])
-            k1^2 + k2^2 + k3^2
-        end
-        m = k^2 ≤ kk < (k + 1)^2
-        mask[I] = m
-        Emask[I] = m * E[I]
+applymask!(grid, k, Emask, mask, E) = myforeachindex(mask) do ilin
+    D = dim(grid)
+    wavenumbers = get_wavenumbers(grid)
+    I = CartesianIndices(wavenumbers)[ilin]
+    kk = if D == 2
+        k1 = I[1] - 1
+        k2 = wavenumber_int(grid, I[2])
+        k1^2 + k2^2
+    else
+        k1 = I[1] - 1
+        k2 = wavenumber_int(grid, I[2])
+        k3 = wavenumber_int(grid, I[3])
+        k1^2 + k2^2 + k3^2
     end
+    m = k^2 ≤ kk < (k + 1)^2
+    mask[I] = m
+    Emask[I] = m * E[I]
+end
 
-function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwargs...)
+randomfield(
+    profile, grid, backend, poisson;
+    totalenergy = 1,
+    rng,
+    kwargs...
+) = let
     (; n) = grid
     (; plan) = poisson
     D = dim(grid)
 
     # Create random field and make it divergence free
     u = vectorfield(grid, backend)
-    p = Field(grid, backend)
     foreach(u -> randn!(rng, u.data), u)
     project!(u, poisson)
 
@@ -428,7 +425,7 @@ function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwar
     totalprofile = sum(k -> profile(k; kwargs...), 0:kdiag)
 
     # Adjust energy in each partially resolved shell [k, k+1)
-    for k = 0:kdiag
+    for k in 0:kdiag
         applymask!(grid, k, Emask, mask, E)
         Eshell = sum(Emask) + sum(selectdim(Emask, 1, 2:kmax)) # Current energy in shell
         E0 = totalenergy * profile(k; kwargs...) / totalprofile # Desired energy in shell
@@ -465,7 +462,7 @@ function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwar
     u
 end
 
-function getshells(grid, shells)
+getshells(grid, shells) = let
     (; n) = grid
     kmax = div(n, 2)
     D = dim(grid)
@@ -534,7 +531,7 @@ function getshells(grid, shells)
     end
 end
 
-function spectral_stuff(grid, backend; npoint = nothing)
+spectral_stuff(grid, backend; npoint = nothing) = let
     (; l, n) = grid
     T = typeof(l)
     D = dim(grid)
@@ -563,7 +560,7 @@ function spectral_stuff(grid, backend; npoint = nothing)
     (; shells = inds, k = 2π / l * kuse, ehat)
 end
 
-function spectrum(u, stuff, poisson)
+spectrum(u, stuff, poisson) = let
     (; shells, k, ehat) = stuff
     (; plan, phat) = poisson
     g = u[1].grid
@@ -579,14 +576,14 @@ function spectrum(u, stuff, poisson)
     (; k, s)
 end
 
-function tophat(grid, compression)
+tophat(grid, compression) = let
     @assert isodd(compression)
     r = div(compression, 2)
     w = fill(1 / compression, compression)
     w
 end
 
-function gaussian(grid, Δ, nσ)
+gaussian(grid, Δ, nσ) = let
     h = spacing(grid)
     σ = Δ / sqrt(12)
     r = round(Int, nσ * σ / h)
@@ -596,38 +593,37 @@ function gaussian(grid, Δ, nσ)
     w
 end
 
-function composekernel(F, G)
+composekernel(F, G) = let
     f = F
     g = G
     I = div(length(f), 2)
     J = div(length(g), 2)
     K = I + J
-    w_double = map((-K):K) do k
+    map((-K):K) do k
         sum((-J):J) do j
             i = k - j
             if abs(i) ≤ I
-                f[I+1+i] * g[J+1+j]
+                f[I + 1 + i] * g[J + 1 + j]
             else
                 zero(eltype(f))
             end
         end
     end
-    w_double
 end
 
-function kernelproduct(::Grid{2}, kernels)
+kernelproduct(::Grid{2}, kernels) = let
     w1 = reshape(kernels[1], :)
     w2 = reshape(kernels[2], 1, :)
     w1 .* w2
 end
-function kernelproduct(::Grid{3}, kernels)
+kernelproduct(::Grid{3}, kernels) = let
     w1 = reshape(kernels[1], :)
     w2 = reshape(kernels[2], 1, :)
     w3 = reshape(kernels[3], 1, 1, :)
     w1 .* w2 .* w3
 end
 
-function applyfilter!(ubar, u, kernel)
+applyfilter!(ubar, u, kernel) = let
     W = kernel
     R = map(n -> div(n, 2), size(W)) |> CartesianIndex
     RR = (-R):R
@@ -637,13 +633,13 @@ function applyfilter!(ubar, u, kernel)
         I = linear2cartesian(grid, ilin)
         s = zero(eltype(ubar))
         for (r, w) in zip(RR, W)
-            s += w * u[I+r]
+            s += w * u[I + r]
         end
         ubar[I] = s
     end
 end
 
-function lazyfilter(u, kernel)
+lazyfilter(u, kernel) = let
     W = kernel
     R = map(n -> div(n, 2), size(W)) |> CartesianIndex
     RR = (-R):R
@@ -652,13 +648,13 @@ function lazyfilter(u, kernel)
         @inline
         s = zero(eltype(u))
         for (r, w) in zip(RR, W)
-            s += w * u[I+r]
+            s += w * u[I + r]
         end
         s
     end
 end
 
-function coarsegrain!(ubar, u, stag)
+coarsegrain!(ubar, u, stag) = let
     g = u.grid
     gbar = ubar.grid
     factor = div(g.n, gbar.n)
@@ -674,7 +670,7 @@ function coarsegrain!(ubar, u, stag)
     end
 end
 
-function lazycoarsegrain(gbar::Grid, u, stag)
+lazycoarsegrain(gbar::Grid, u, stag) = let
     g = u.grid
     factor = div(g.n, gbar.n)
     a = div(factor, 2)
@@ -694,12 +690,12 @@ getsetup() = (;
     # n_dns = 2700, n_les = 300, visc = 5e-4,
     n_dns = 300,
     n_les = 100,
-    visc = 1e-3,
+    visc = 1.0e-3,
     Δ_ratio = 2,
     nσ = 3, # Number of sigmas out in gaussian support
 )
 
-function dnsaid(setup)
+dnsaid(setup) = let
     (; n_dns, n_les, visc, l, D) = setup
     tstop = 0.005
     cfl = 0.45
@@ -747,7 +743,7 @@ function dnsaid(setup)
         b = lazycoarsegrain(g_les, a, faces[i])
         b
     end
-    for i = 1:D
+    for i in 1:D
         myforeachindex(u_nomo[i].data) do ilin
             @inline
             u_dnsΔH_concrete[i][ilin] = u_dnsΔH[i][ilin]
@@ -918,24 +914,9 @@ function dnsaid(setup)
             r2_11_c, r2_22_c, r2_12_c
         else
             σ2_11, σ2_22, σ2_33, σ2_12, σ2_23, σ2_31 = σ_dns2
-            r2_11 = LazyField(
-                (σ2_11, p_dns2, I) -> σ2_11[I] + p_dns2[I],
-                g_dns,
-                σ2_11,
-                p_dns2,
-            )
-            r2_22 = LazyField(
-                (σ2_22, p_dns2, I) -> σ2_22[I] + p_dns2[I],
-                g_dns,
-                σ2_22,
-                p_dns2,
-            )
-            r2_33 = LazyField(
-                (σ2_33, p_dns2, I) -> σ2_33[I] + p_dns2[I],
-                g_dns,
-                σ2_33,
-                p_dns2,
-            )
+            r2_11 = LazyField((σ2_11, p_dns2, I) -> σ2_11[I] + p_dns2[I], g_dns, σ2_11, p_dns2)
+            r2_22 = LazyField((σ2_22, p_dns2, I) -> σ2_22[I] + p_dns2[I], g_dns, σ2_22, p_dns2)
+            r2_33 = LazyField((σ2_33, p_dns2, I) -> σ2_33[I] + p_dns2[I], g_dns, σ2_33, p_dns2)
             r2_12 = σ2_12
             r2_23 = σ2_23
             r2_31 = σ2_31
@@ -950,19 +931,14 @@ function dnsaid(setup)
         σ_c = stresstensor(u_c, visc)
         tensordivergence!(du_les, σ_c, false) # Overwrite du
         project!(du_les, poisson_les) # σ_both is projected
-        r_both =
-            map((r1, r2) -> LazyField((r1, r2, I) -> r1[I] - r2[I], g_les, r1, r2), rΔH, r2)
+        r_both = map((r1, r2) -> LazyField((r1, r2, I) -> r1[I] - r2[I], g_les, r1, r2), rΔH, r2)
         tensordivergence!(du_les, r_both, true) # Add to existing du, don't project
         foreach(i -> axpy!(dt, du_les[i].data, u_c[i].data), 1:D)
 
         # Classic+Flux
         σ2 = stresstensor(u_dnsΔH_coarse, visc)
         σ_cf = stresstensor(u_cf, visc)
-        σ_both = map(
-            (σ_cf, σ2) -> LazyField((σ_cf, σ2, I) -> σ_cf[I] - σ2[I], g_les, σ_cf, σ2),
-            σ_cf,
-            σ2,
-        )
+        σ_both = map((σ_cf, σ2) -> LazyField((σ_cf, σ2, I) -> σ_cf[I] - σ2[I], g_les, σ_cf, σ2), σ_cf, σ2)
         tensordivergence!(du_les, σ_both, false) # Overwrite du
         project!(du_les, poisson_les) # σ_both is projected
         tensordivergence!(du_les, rΔH, true) # Add to existing du, don't project
@@ -971,12 +947,7 @@ function dnsaid(setup)
         # Classic+Flux+Div
         σ2 = stresstensor(u_dnsΔH_coarse, visc)
         σ_cfd = stresstensor(u_cfd, visc)
-        σ_both = map(
-            (σ_cfd, σ2) ->
-                LazyField((σ_cfd, σ2, I) -> σ_cfd[I] - σ2[I], g_les, σ_cfd, σ2),
-            σ_cfd,
-            σ2,
-        )
+        σ_both = map((σ_cfd, σ2) -> LazyField((σ_cfd, σ2, I) -> σ_cfd[I] - σ2[I], g_les, σ_cfd, σ2), σ_cfd, σ2)
         tensordivergence!(du_les, σ_both, false) # Overwrite du
         project!(du_les, poisson_les) # σ_both is projected
         tensordivergence_nonsym!(du_les, rΔHi, true) # Add to existing du, don't project
@@ -985,11 +956,7 @@ function dnsaid(setup)
         # Classic+Flux+Div symmetrized
         σ2 = stresstensor(u_dnsΔH_coarse, visc)
         σ_cfd_symm = stresstensor(u_cfd_symm, visc)
-        σ_both = map(
-            (σ1, σ2) -> LazyField((σ1, σ2, I) -> σ1[I] - σ2[I], g_les, σ1, σ2),
-            σ_cfd_symm,
-            σ2,
-        )
+        σ_both = map((σ1, σ2) -> LazyField((σ1, σ2, I) -> σ1[I] - σ2[I], g_les, σ1, σ2), σ_cfd_symm, σ2)
         tensordivergence!(du_les, σ_both, false) # Overwrite du
         project!(du_les, poisson_les) # σ_both is projected
         tensordivergence!(du_les, rΔHi_symm, true) # Add to existing du, don't project
@@ -1002,7 +969,7 @@ function dnsaid(setup)
     (; u_dns, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
 
-function get_positions(g::Grid)
+get_positions(g::Grid) = let
     D = dim(g)
     faces = ntuple(i -> ntuple(==(i), D), D)
     center = ntuple(Returns(false), D)
@@ -1011,7 +978,7 @@ function get_positions(g::Grid)
     (; faces, center, corner2D, corners3D)
 end
 
-function get_kernels(g_dns, g_les, Δ_ratio, nσ)
+get_kernels(g_dns, g_les, Δ_ratio, nσ) = let
     D = dim(g_dns)
     comp = div(g_dns.n, g_les.n)
     h = spacing(g_dns)
@@ -1026,121 +993,121 @@ function get_kernels(g_dns, g_les, Δ_ratio, nσ)
 end
 
 get_r(σ, p, g) =
-    if dim(g) == 2
-        r11 = LazyField((σ, p, I) -> σ[1][I] + p[I], g, σ, p)
-        r22 = LazyField((σ, p, I) -> σ[2][I] + p[I], g, σ, p)
-        r12 = σ[3]
-        r11, r22, r12
-    else
-        r11 = LazyField((σ, p, I) -> σ[1][I] + p[I], g, σ, p)
-        r22 = LazyField((σ, p, I) -> σ[2][I] + p[I], g, σ, p)
-        r33 = LazyField((σ, p, I) -> σ[3][I] + p[I], g, σ, p)
-        r12 = σ[4]
-        r23 = σ[5]
-        r31 = σ[6]
-        r11, r22, r33, r12, r23, r31
-    end
+if dim(g) == 2
+    r11 = LazyField((σ, p, I) -> σ[1][I] + p[I], g, σ, p)
+    r22 = LazyField((σ, p, I) -> σ[2][I] + p[I], g, σ, p)
+    r12 = σ[3]
+    r11, r22, r12
+else
+    r11 = LazyField((σ, p, I) -> σ[1][I] + p[I], g, σ, p)
+    r22 = LazyField((σ, p, I) -> σ[2][I] + p[I], g, σ, p)
+    r33 = LazyField((σ, p, I) -> σ[3][I] + p[I], g, σ, p)
+    r12 = σ[4]
+    r23 = σ[5]
+    r31 = σ[6]
+    r11, r22, r33, r12, r23, r31
+end
 
 get_rΔHi(r, GΔHi, g_dns, g_les) =
-    if dim(g_dns) == 2
-        (; center, corner2D) = get_positions(g_dns)
-        r11, r22, r12 = r
-        r11_bar = lazyfilter(r11, GΔHi[1])
-        r21_bar = lazyfilter(r12, GΔHi[1])
-        r12_bar = lazyfilter(r12, GΔHi[2])
-        r22_bar = lazyfilter(r22, GΔHi[2])
-        r11_c = lazycoarsegrain(g_les, r11_bar, center)
-        r21_c = lazycoarsegrain(g_les, r21_bar, corner2D)
-        r12_c = lazycoarsegrain(g_les, r12_bar, corner2D)
-        r22_c = lazycoarsegrain(g_les, r22_bar, center)
-        r11_c, r21_c, r12_c, r22_c
-    else
-        (; center, corners3D) = get_positions(g_dns)
-        r11, r22, r33, r12, r23, r31 = r
-        r11_bar = lazyfilter(r11, GΔHi[1])
-        r21_bar = lazyfilter(r12, GΔHi[1])
-        r31_bar = lazyfilter(r31, GΔHi[1])
-        r12_bar = lazyfilter(r12, GΔHi[2])
-        r22_bar = lazyfilter(r22, GΔHi[2])
-        r32_bar = lazyfilter(r23, GΔHi[2])
-        r13_bar = lazyfilter(r31, GΔHi[3])
-        r23_bar = lazyfilter(r23, GΔHi[3])
-        r33_bar = lazyfilter(r33, GΔHi[3])
-        r11_c = lazycoarsegrain(g_les, r11_bar, center)
-        r21_c = lazycoarsegrain(g_les, r21_bar, corners3D[3])
-        r31_c = lazycoarsegrain(g_les, r31_bar, corners3D[2])
-        r12_c = lazycoarsegrain(g_les, r12_bar, corners3D[3])
-        r22_c = lazycoarsegrain(g_les, r22_bar, center)
-        r32_c = lazycoarsegrain(g_les, r32_bar, corners3D[1])
-        r13_c = lazycoarsegrain(g_les, r13_bar, corners3D[2])
-        r23_c = lazycoarsegrain(g_les, r23_bar, corners3D[1])
-        r33_c = lazycoarsegrain(g_les, r33_bar, center)
-        r11_c, r21_c, r31_c, r12_c, r22_c, r32_c, r13_c, r23_c, r33_c
-    end
+if dim(g_dns) == 2
+    (; center, corner2D) = get_positions(g_dns)
+    r11, r22, r12 = r
+    r11_bar = lazyfilter(r11, GΔHi[1])
+    r21_bar = lazyfilter(r12, GΔHi[1])
+    r12_bar = lazyfilter(r12, GΔHi[2])
+    r22_bar = lazyfilter(r22, GΔHi[2])
+    r11_c = lazycoarsegrain(g_les, r11_bar, center)
+    r21_c = lazycoarsegrain(g_les, r21_bar, corner2D)
+    r12_c = lazycoarsegrain(g_les, r12_bar, corner2D)
+    r22_c = lazycoarsegrain(g_les, r22_bar, center)
+    r11_c, r21_c, r12_c, r22_c
+else
+    (; center, corners3D) = get_positions(g_dns)
+    r11, r22, r33, r12, r23, r31 = r
+    r11_bar = lazyfilter(r11, GΔHi[1])
+    r21_bar = lazyfilter(r12, GΔHi[1])
+    r31_bar = lazyfilter(r31, GΔHi[1])
+    r12_bar = lazyfilter(r12, GΔHi[2])
+    r22_bar = lazyfilter(r22, GΔHi[2])
+    r32_bar = lazyfilter(r23, GΔHi[2])
+    r13_bar = lazyfilter(r31, GΔHi[3])
+    r23_bar = lazyfilter(r23, GΔHi[3])
+    r33_bar = lazyfilter(r33, GΔHi[3])
+    r11_c = lazycoarsegrain(g_les, r11_bar, center)
+    r21_c = lazycoarsegrain(g_les, r21_bar, corners3D[3])
+    r31_c = lazycoarsegrain(g_les, r31_bar, corners3D[2])
+    r12_c = lazycoarsegrain(g_les, r12_bar, corners3D[3])
+    r22_c = lazycoarsegrain(g_les, r22_bar, center)
+    r32_c = lazycoarsegrain(g_les, r32_bar, corners3D[1])
+    r13_c = lazycoarsegrain(g_les, r13_bar, corners3D[2])
+    r23_c = lazycoarsegrain(g_les, r23_bar, corners3D[1])
+    r33_c = lazycoarsegrain(g_les, r33_bar, center)
+    r11_c, r21_c, r31_c, r12_c, r22_c, r32_c, r13_c, r23_c, r33_c
+end
 
 symmetrize(σ, g) =
-    if dim(g) == 2
-        σ_11, σ_21, σ_12, σ_22 = σ
-        σ_symm_12 = LazyField((σ21, σ12, I) -> (σ21[I] + σ12[I]) / 2, g, σ_21, σ_12)
-        σ_11, σ_22, σ_symm_12
-    else
-        σ_11, σ_21, σ_31, σ_12, σ_22, σ_32, σ_13, σ_23, σ_33 = σ
-        σ_symm_12 = LazyField((σ21, σ12, I) -> (σ21[I] + σ12[I]) / 2, g, σ_21, σ_12)
-        σ_symm_23 = LazyField((σ32, σ23, I) -> (σ32[I] + σ23[I]) / 2, g, σ_32, σ_23)
-        σ_symm_31 = LazyField((σ31, σ13, I) -> (σ31[I] + σ13[I]) / 2, g, σ_31, σ_13)
-        σ_11, σ_22, σ_33, σ_symm_12, σ_symm_23, σ_symm_31
-    end
+if dim(g) == 2
+    σ_11, σ_21, σ_12, σ_22 = σ
+    σ_symm_12 = LazyField((σ21, σ12, I) -> (σ21[I] + σ12[I]) / 2, g, σ_21, σ_12)
+    σ_11, σ_22, σ_symm_12
+else
+    σ_11, σ_21, σ_31, σ_12, σ_22, σ_32, σ_13, σ_23, σ_33 = σ
+    σ_symm_12 = LazyField((σ21, σ12, I) -> (σ21[I] + σ12[I]) / 2, g, σ_21, σ_12)
+    σ_symm_23 = LazyField((σ32, σ23, I) -> (σ32[I] + σ23[I]) / 2, g, σ_32, σ_23)
+    σ_symm_31 = LazyField((σ31, σ13, I) -> (σ31[I] + σ13[I]) / 2, g, σ_31, σ_13)
+    σ_11, σ_22, σ_33, σ_symm_12, σ_symm_23, σ_symm_31
+end
 
 get_σΔH(σ, g_dns, g_les, GΔH) =
-    if dim(g_dns) == 2
-        (; center, corner2D) = get_positions(g_dns)
-        σ11, σ22, σ12 = σ
-        σ11_bar = lazyfilter(σ11, GΔH)
-        σ22_bar = lazyfilter(σ22, GΔH)
-        σ12_bar = lazyfilter(σ12, GΔH)
-        σ11_c = lazycoarsegrain(g_les, σ11_bar, center)
-        σ22_c = lazycoarsegrain(g_les, σ22_bar, center)
-        σ12_c = lazycoarsegrain(g_les, σ12_bar, corner2D)
-        σ11_c, σ22_c, σ12_c
-    else
-        (; center, corners3D) = get_positions(g_dns)
-        σ11, σ22, σ33, σ12, σ23, σ31 = σ
-        σ11_bar = lazyfilter(σ11, GΔH)
-        σ22_bar = lazyfilter(σ22, GΔH)
-        σ33_bar = lazyfilter(σ33, GΔH)
-        σ12_bar = lazyfilter(σ12, GΔH)
-        σ23_bar = lazyfilter(σ23, GΔH)
-        σ31_bar = lazyfilter(σ31, GΔH)
-        σ11_c = lazycoarsegrain(g_les, σ11_bar, center)
-        σ22_c = lazycoarsegrain(g_les, σ22_bar, center)
-        σ33_c = lazycoarsegrain(g_les, σ33_bar, center)
-        σ12_c = lazycoarsegrain(g_les, σ12_bar, corners3D[3])
-        σ23_c = lazycoarsegrain(g_les, σ23_bar, corners3D[1])
-        σ31_c = lazycoarsegrain(g_les, σ31_bar, corners3D[2])
-        σ11_c, σ22_c, σ33_c, σ12_c, σ23_c, σ31_c
-    end
+if dim(g_dns) == 2
+    (; center, corner2D) = get_positions(g_dns)
+    σ11, σ22, σ12 = σ
+    σ11_bar = lazyfilter(σ11, GΔH)
+    σ22_bar = lazyfilter(σ22, GΔH)
+    σ12_bar = lazyfilter(σ12, GΔH)
+    σ11_c = lazycoarsegrain(g_les, σ11_bar, center)
+    σ22_c = lazycoarsegrain(g_les, σ22_bar, center)
+    σ12_c = lazycoarsegrain(g_les, σ12_bar, corner2D)
+    σ11_c, σ22_c, σ12_c
+else
+    (; center, corners3D) = get_positions(g_dns)
+    σ11, σ22, σ33, σ12, σ23, σ31 = σ
+    σ11_bar = lazyfilter(σ11, GΔH)
+    σ22_bar = lazyfilter(σ22, GΔH)
+    σ33_bar = lazyfilter(σ33, GΔH)
+    σ12_bar = lazyfilter(σ12, GΔH)
+    σ23_bar = lazyfilter(σ23, GΔH)
+    σ31_bar = lazyfilter(σ31, GΔH)
+    σ11_c = lazycoarsegrain(g_les, σ11_bar, center)
+    σ22_c = lazycoarsegrain(g_les, σ22_bar, center)
+    σ33_c = lazycoarsegrain(g_les, σ33_bar, center)
+    σ12_c = lazycoarsegrain(g_les, σ12_bar, corners3D[3])
+    σ23_c = lazycoarsegrain(g_les, σ23_bar, corners3D[1])
+    σ31_c = lazycoarsegrain(g_les, σ31_bar, corners3D[2])
+    σ11_c, σ22_c, σ33_c, σ12_c, σ23_c, σ31_c
+end
 
 lazytensorcoarsegrain(g_les, σ) =
-    if dim(g_les) == 2
-        (; center, corner2D) = get_positions(g_les)
-        σ_11, σ_22, σ_12 = σ
-        σ_11_c = lazycoarsegrain(g_les, σ_11, center)
-        σ_22_c = lazycoarsegrain(g_les, σ_22, center)
-        σ_12_c = lazycoarsegrain(g_les, σ_12, corner2D)
-        σ_11_c, σ_22_c, σ_12_c
-    else
-        (; center, corners3D) = get_positions(g_dns)
-        σ_11, σ_22, σ_33, σ_12, σ_23, σ_31 = σ
-        σ_11_c = lazycoarsegrain(g_les, σ_11, center)
-        σ_22_c = lazycoarsegrain(g_les, σ_22, center)
-        σ_33_c = lazycoarsegrain(g_les, σ_33, center)
-        σ_12_c = lazycoarsegrain(g_les, σ_12, corners3D[3])
-        σ_23_c = lazycoarsegrain(g_les, σ_23, corners3D[1])
-        σ_31_c = lazycoarsegrain(g_les, σ_31, corners3D[2])
-        σ_11_c, σ_22_c, σ_33_c, σ_12_c, σ_23_c, σ_31_c
-    end
+if dim(g_les) == 2
+    (; center, corner2D) = get_positions(g_les)
+    σ_11, σ_22, σ_12 = σ
+    σ_11_c = lazycoarsegrain(g_les, σ_11, center)
+    σ_22_c = lazycoarsegrain(g_les, σ_22, center)
+    σ_12_c = lazycoarsegrain(g_les, σ_12, corner2D)
+    σ_11_c, σ_22_c, σ_12_c
+else
+    (; center, corners3D) = get_positions(g_dns)
+    σ_11, σ_22, σ_33, σ_12, σ_23, σ_31 = σ
+    σ_11_c = lazycoarsegrain(g_les, σ_11, center)
+    σ_22_c = lazycoarsegrain(g_les, σ_22, center)
+    σ_33_c = lazycoarsegrain(g_les, σ_33, center)
+    σ_12_c = lazycoarsegrain(g_les, σ_12, corners3D[3])
+    σ_23_c = lazycoarsegrain(g_les, σ_23, corners3D[1])
+    σ_31_c = lazycoarsegrain(g_les, σ_31, corners3D[2])
+    σ_11_c, σ_22_c, σ_33_c, σ_12_c, σ_23_c, σ_31_c
+end
 
-function step_ΔHπ_classic!(u_les, u_dns, du, p, poisson, visc, dt, GΔH)
+step_ΔHπ_classic!(u_les, u_dns, du_les, poisson_les, visc, dt, GΔH) = let
     g_les = u_les[1].grid
     g_dns = u_dns[1].grid
     D = dim(g_dns)
@@ -1151,7 +1118,7 @@ function step_ΔHπ_classic!(u_les, u_dns, du, p, poisson, visc, dt, GΔH)
     σ2 = lazytensorcoarsegrain(g_les, σ_dns2)
     σ_les = stresstensor(u_les, visc)
     σ_all = map(
-        (σ_c, σ1, σ2) -> LazyField(
+        (σ_les, σ1, σ2) -> LazyField(
             (σ_les, σ1, σ2, I) -> σ_les[I] + σ1[I] - σ2[I],
             g_les,
             σ_les,
@@ -1162,12 +1129,76 @@ function step_ΔHπ_classic!(u_les, u_dns, du, p, poisson, visc, dt, GΔH)
         σΔH,
         σ2,
     )
-    tensordivergence!(du, σ_all, false)
-    project!(du_les, poisson)
-    foreach(i -> axpy!(dt, du[i].data, u_les[i].data), 1:D)
+    tensordivergence!(du_les, σ_all, false)
+    project!(du_les, poisson_les)
+    foreach(i -> axpy!(dt, du_les[i].data, u_les[i].data), 1:D)
 end
 
-function dnsaid_project(setup)
+step_ΔHπ_classic_flux!(u_les, ubar_coarse, u_dns, du_les, poisson_les, visc, dt, GΔH) = let
+    g_dns = u_dns[1].grid
+    g_les = u_les[1].grid
+    D = dim(g_dns)
+    σ_dns = stresstensor(u_dns, visc)
+    σ1 = get_σΔH(σ_dns, g_dns, g_les, GΔH)
+    σ2 = stresstensor(ubar_coarse, visc)
+    σ_les = stresstensor(u_les, visc)
+    σ_all = map(
+        (σ_les, σ1, σ2) -> LazyField(
+            (σ_les, σ1, σ2, I) -> σ_les[I] + σ1[I] - σ2[I],
+            g_les,
+            σ_les,
+            σ1,
+            σ2,
+        ),
+        σ_les,
+        σ1,
+        σ2,
+    )
+    tensordivergence!(du_les, σ_all, false)
+    project!(du_les, poisson_les)
+    foreach(i -> axpy!(dt, du_les[i].data, u_les[i].data), 1:D)
+end
+
+step_ΔHπ_classic_flux_div!(u_les, ubar_coarse, u_dns, r_dns, du_les, poisson_les, visc, dt, GΔH, GΔHi) = let
+    g_dns = u_dns[1].grid
+    g_les = u_les[1].grid
+    D = dim(g_dns)
+    σ_les = stresstensor(u_les, visc)
+    σ2 = stresstensor(ubar_coarse, visc)
+    σ_both = map(
+        (σ_les, σ2) ->
+        LazyField((σ_les, σ2, I) -> σ_les[I] - σ2[I], g_les, σ_les, σ2),
+        σ_les,
+        σ2,
+    )
+    rΔHi = get_rΔHi(r_dns, GΔHi, g_dns, g_les)
+    tensordivergence!(du_les, σ_both, false) # Overwrite du
+    tensordivergence_nonsym!(du_les, rΔHi, true) # Add to existing du, don't project
+    project!(du_les, poisson_les)
+    foreach(i -> axpy!(dt, du_les[i].data, u_les[i].data), 1:D)
+end
+
+step_ΔHπ_classic_flux_div_symm!(u_les, ubar_coarse, u_dns, r_dns, du_les, poisson_les, visc, dt, GΔH, GΔHi) = let
+    g_dns = u_dns[1].grid
+    g_les = u_les[1].grid
+    D = dim(g_dns)
+    σ_les = stresstensor(u_les, visc)
+    σ2 = stresstensor(ubar_coarse, visc)
+    σ_both = map(
+        (σ_les, σ2) ->
+        LazyField((σ_les, σ2, I) -> σ_les[I] - σ2[I], g_les, σ_les, σ2),
+        σ_les,
+        σ2,
+    )
+    rΔHi = get_rΔHi(r_dns, GΔHi, g_dns, g_les)
+    rΔHi_symm = symmetrize(rΔHi, g_les)
+    tensordivergence!(du_les, σ_both, false) # Overwrite du
+    tensordivergence!(du_les, rΔHi_symm, true) # Add to existing du
+    project!(du_les, poisson_les)
+    foreach(i -> axpy!(dt, du_les[i].data, u_les[i].data), 1:D)
+end
+
+dnsaid_project(setup) = let
     (; l, n_dns, n_les, visc, Δ_ratio, nσ) = setup
     twarm = 0.1
     tstop = 0.01
@@ -1209,20 +1240,20 @@ function dnsaid_project(setup)
         t += dt
         itime += 1
 
-        @info "t = $(round(t; sigdigits=4)) / $(round(twarm; sigdigits=4))"
+        @info "t = $(round(t; sigdigits = 4)) / $(round(twarm; sigdigits = 4))"
 
         # DNS stuff
         step_forwardeuler!(u_dns, du_dns, poisson_dns, visc, dt)
     end
 
     # Initialize LES fields
-    for i = 1:D
+    for i in 1:D
         ubari = lazyfilter(u_dns[i], GΔH)
         coarsegrain!(ubar_coarse[i], ubari, faces[i])
     end
     project!(ubar_coarse, poisson_les)
 
-    for i = 1:D
+    for i in 1:D
         copyto!(u_nomo[i].data, ubar_coarse[i].data)
         copyto!(u_c[i].data, ubar_coarse[i].data)
         copyto!(u_cf[i].data, ubar_coarse[i].data)
@@ -1244,94 +1275,29 @@ function dnsaid_project(setup)
         tensordivergence!(du_dns, σ_dns, false)
         project!(du_dns, poisson_dns)
         r = get_r(σ_dns, poisson_dns.p, g_dns)
-        rΔHi = get_rΔHi(r, GΔHi, g_dns, g_les)
-        rΔHi_symm = symmetrize(rΔHi, g_les)
-
-        σΔH = get_σΔH(σ_dns, g_dns, g_les, GΔH)
-        u_dnsΔH = map(u -> lazyfilter(u, GΔH), u_dns)
 
         # Filter
-        for i = 1:D
+        for i in 1:D
             ubari = lazyfilter(u_dns[i], GΔH)
             coarsegrain!(ubar_coarse[i], ubari, faces[i])
         end
         project!(ubar_coarse, poisson_les)
 
-        # No-model
+        # LES steps
         step_forwardeuler!(u_nomo, du_les, poisson_les, visc, dt)
-
-        # Classic
-        σ_dns2 = stresstensor(u_dnsΔH, visc)
-        σ2 = lazytensorcoarsegrain(g_les, σ_dns2)
-        σ_c = stresstensor(u_c, visc)
-        σ_all = map(
-            (σ_c, σ1, σ2) -> LazyField(
-                (σ_c, σ1, σ2, I) -> σ_c[I] + σ1[I] - σ2[I],
-                g_les,
-                σ_c,
-                σ1,
-                σ2,
-            ),
-            σ_c,
-            σΔH,
-            σ2,
+        step_ΔHπ_classic!(u_c, u_dns, du_les, poisson_les, visc, dt, GΔH)
+        step_ΔHπ_classic_flux!(u_cf, ubar_coarse, u_dns, du_les, poisson_les, visc, dt, GΔH)
+        step_ΔHπ_classic_flux_div!(
+            u_cfd, ubar_coarse, u_dns, r, du_les, poisson_les, visc, dt, GΔH, GΔHi,
         )
-        tensordivergence!(du_les, σ_all, false)
-        project!(du_les, poisson_les)
-        foreach(i -> axpy!(dt, du_les[i].data, u_c[i].data), 1:D)
-
-        # Classic+Flux
-        σ2 = stresstensor(ubar_coarse, visc)
-        σ_cf = stresstensor(u_cf, visc)
-        σ_all = map(
-            (σ_cf, σ1, σ2) -> LazyField(
-                (σ_cf, σ1, σ2, I) -> σ_cf[I] + σ1[I] - σ2[I],
-                g_les,
-                σ_cf,
-                σ1,
-                σ2,
-            ),
-            σ_cf,
-            σΔH,
-            σ2,
-        )
-        tensordivergence!(du_les, σ_all, false)
-        project!(du_les, poisson_les)
-        foreach(i -> axpy!(dt, du_les[i].data, u_cf[i].data), 1:D)
-
-        # Classic+Flux+Div
-        σ2 = stresstensor(ubar_coarse, visc)
-        σ_cfd = stresstensor(u_cfd, visc)
-        σ_both = map(
-            (σ_cfd, σ2) ->
-                LazyField((σ_cfd, σ2, I) -> σ_cfd[I] - σ2[I], g_les, σ_cfd, σ2),
-            σ_cfd,
-            σ2,
-        )
-        tensordivergence!(du_les, σ_both, false) # Overwrite du
-        tensordivergence_nonsym!(du_les, rΔHi, true) # Add to existing du, don't project
-        project!(du_les, poisson_les)
-        foreach(i -> axpy!(dt, du_les[i].data, u_cfd[i].data), 1:D)
-
-        # Classic+Flux+Div symmetrized
-        σ2 = stresstensor(ubar_coarse, visc)
-        σ_cfd_symm = stresstensor(u_cfd_symm, visc)
-        σ_both = map(
-            (σ1, σ2) -> LazyField((σ1, σ2, I) -> σ1[I] - σ2[I], g_les, σ1, σ2),
-            σ_cfd_symm,
-            σ2,
-        )
-        tensordivergence!(du_les, σ_both, false) # Overwrite du
-        tensordivergence!(du_les, rΔHi_symm, true) # Add to existing du
-        project!(du_les, poisson_les) # σ_both is projected
-        foreach(i -> axpy!(dt, du_les[i].data, u_cfd_symm[i].data), 1:D)
+        step_ΔHπ_classic_flux_div_symm!(u_cfd_symm, ubar_coarse, u_dns, r, du_les, poisson_les, visc, dt, GΔH, GΔHi)
 
         # DNS
         foreach(i -> axpy!(dt, du_dns[i].data, u_dns[i].data), 1:D)
     end
 
     # Filter
-    for i = 1:D
+    for i in 1:D
         ubari = lazyfilter(u_dns[i], GΔH)
         coarsegrain!(ubar_coarse[i], ubari, faces[i])
     end
@@ -1340,11 +1306,9 @@ function dnsaid_project(setup)
     (; u_dns, u_les = ubar_coarse, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
 
-function compute_errors(uaid)
-    g_dns = uaid.u_dns[1].grid
-    g_les = uaid.u_nomo[1].grid
-    D = dim(g_dns)
-    e = map((; uaid.u_nomo, uaid.u_c, uaid.u_cf, uaid.u_cfd_symm, uaid.u_cfd)) do ubar
+compute_errors(uaid) = let
+    D = dim(uaid.u_nomo[1].grid)
+    map((; uaid.u_nomo, uaid.u_c, uaid.u_cf, uaid.u_cfd_symm, uaid.u_cfd)) do ubar
         sum(1:D) do i
             a = ubar[i].data
             b = uaid.u_les[i].data
@@ -1353,8 +1317,8 @@ function compute_errors(uaid)
     end
 end
 
-function plot_spectra(uaid)
-    visc = 3e-4
+plot_spectra(uaid) = let
+    visc = 3.0e-4
     g_dns = uaid.u_dns[1].grid
     g_les = uaid.u_les[1].grid
     backend = defaultbackend()
@@ -1363,14 +1327,16 @@ function plot_spectra(uaid)
     stuff_dns = spectral_stuff(g_dns, backend)
     stuff_les = spectral_stuff(g_les, backend)
     spec_dns = spectrum(uaid.u_dns, stuff_dns, poisson_dns)
-    spec_les = map([
-        (:u_les, "Filtered DNS"),
-        (:u_nomo, "No-model"),
-        (:u_c, "Classic"),
-        (:u_cf, "Classic + Flux"),
-        (:u_cfd, "Classic + Flux + Div"),
-        (:u_cfd_symm, "Classic + Flux + Div (symm)"),
-    ]) do (key, label)
+    spec_les = map(
+        [
+            (:u_les, "Filtered DNS"),
+            (:u_nomo, "No-model"),
+            (:u_c, "Classic"),
+            (:u_cf, "Classic + Flux"),
+            (:u_cfd, "Classic + Flux + Div"),
+            (:u_cfd_symm, "Classic + Flux + Div (symm)"),
+        ]
+    ) do (key, label)
         s = spectrum(uaid[key], stuff_les, poisson_les)
         (; s..., label)
     end
@@ -1379,7 +1345,7 @@ function plot_spectra(uaid)
     # lines!(ax, spec_dns.k, spec_dns.s; label = "DNS")
     foreach(s -> lines!(ax, s.k, s.s; s.label), spec_les)
     kkol = [10^1.5, maximum(spec_dns.k)]
-    ekol = 1e4 * kkol .^ (-3)
+    ekol = 1.0e4 * kkol .^ (-3)
     # lines!(ax, kkol, ekol)
     Legend(fig[1, 2], ax)
     save("~/toto.png" |> expanduser, fig)

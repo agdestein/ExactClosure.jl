@@ -14,7 +14,6 @@ u = let
     grid = NS.Grid{2}(l, n)
     backend = NS.defaultbackend()
     poisson = NS.poissonsolver(grid, backend)
-    p = NS.Field(grid, backend)
     # u = NS.Field(grid, backend), NS.Field(grid, backend)
     profile, args = k -> (k > 0) * k^-3.0, (;)
     # profile, args = NS.peak_profile, (; kpeak = 5)
@@ -27,7 +26,6 @@ u = let
         totalenergy = 1.0,
         args...,
     )
-    NS.divergence!(p, u)
     w = NS.Field(grid, backend)
     du = NS.Field(grid, backend), NS.Field(grid, backend)
     u0 = NS.Field(grid, backend), NS.Field(grid, backend)
@@ -36,13 +34,13 @@ u = let
     fig |> display
     i = 0
     t = 0.0
-    tmax = 1.0
+    tmax = 5.0
     while t < tmax
         if i > 0 # Skip first step
             dt = NS.propose_timestep(u, visc, 0.5)
             dt = min(dt, tmax - t) # Don't step past tmax
-            # NS.step_forwardeuler!(u, du, p, poisson, visc, dt)
-            NS.step_wray3!(u, du, u0, p, poisson, visc, dt)
+            # NS.step_forwardeuler!(u, du, poisson, visc, dt)
+            NS.step_wray3!(u, du, u0, poisson, visc, dt)
             t += dt
         end
         if i % 1 == 0
@@ -140,24 +138,21 @@ let
     fig
 end
 
-uaid = NS.dnsaid()
+setup = NS.getsetup()
+
+# uaid = NS.dnsaid(setup)
+uaid = NS.dnsaid_project(setup)
 
 uaid.u_dns[1] |> heatmap
 uaid.u_nomo[1] |> heatmap
 uaid.u_cfd[1] |> heatmap
 
-setup = NS.getsetup()
-
-uaid = NS.dnsaid(setup)
-uaid = NS.dnsaid_project(setup)
 @report_opt NS.dnsaid_project(setup)
 
 let
     ucpu = adapt(Array, uaid)
     save_object("uaid.jld2", ucpu)
 end
-
-NS.compute_errors(uaid)
 
 NS.compute_errors(uaid) |> pairs
 
