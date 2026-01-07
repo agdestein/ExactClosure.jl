@@ -192,10 +192,9 @@ tensordivergence_nonsym!(du, σ, doadd) =
     end
 
 function poissonsolver(grid, backend)
-    (; l, n) = grid
+    (; n) = grid
 
     D = dim(grid)
-    h = spacing(grid)
 
     # Since we use rfft, the first dimension is halved
     kmax = if D == 2
@@ -206,10 +205,10 @@ function poissonsolver(grid, backend)
 
     # Placeholders for intermediate results
     phat = KernelAbstractions.allocate(backend, ComplexF64, kmax)
-    p = KernelAbstractions.allocate(backend, Float64, ntuple(Returns(n), D))
-    plan = plan_rfft(p)
+    p = Field(grid, backend)
+    plan = plan_rfft(p.data)
 
-    (; plan, phat)
+    (; plan, p, phat)
 end
 
 divergence!(d, u) =
@@ -248,8 +247,8 @@ pressuregradient!(u, p) =
         end
     end
 
-function project!(u, p, poisson)
-    (; plan, phat) = poisson
+function project!(u, poisson)
+    (; plan, p, phat) = poisson
     g = p.grid
     D = dim(g)
 
@@ -299,7 +298,7 @@ function project!(u, p, poisson)
     u
 end
 
-function step_forwardeuler!(u, du, p, poisson, visc, dt)
+function step_forwardeuler!(u, du, poisson, visc, dt)
     σ = stresstensor(u, visc)
     tensordivergence!(du, σ, false)
     myforeachindex(u[1].data) do i
@@ -307,10 +306,10 @@ function step_forwardeuler!(u, du, p, poisson, visc, dt)
             u[i] += dt * du[i]
         end
     end
-    project!(u, p, poisson)
+    project!(u, poisson)
 end
 
-function step_wray3!(u, du, u0, p, poisson, visc, dt)
+function step_wray3!(u, du, u0, poisson, visc, dt)
     a = 8 / 15, 5 / 12, 3 / 4
     b = 1 / 4, 0 / 1
     c = 0 / 1, 8 / 15, 2 / 3
@@ -329,7 +328,7 @@ function step_wray3!(u, du, u0, p, poisson, visc, dt)
             i == 1 || copyto!(u.data, u0.data) # Skip first iter
             axpy!(a[i] * dt, du.data, u.data)
         end
-        project!(u, p, poisson)
+        project!(u, poisson)
 
         # Compute u0 = u0 + dt * b[i] * du
         i == nstage || for (du, u0) in zip(du, u0)
@@ -395,7 +394,7 @@ function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwar
     u = vectorfield(grid, backend)
     p = Field(grid, backend)
     foreach(u -> randn!(rng, u.data), u)
-    project!(u, p, poisson)
+    project!(u, poisson)
 
     uhat = map(u -> plan * u.data, u)
     for uhat in uhat
@@ -456,7 +455,7 @@ function randomfield(profile, grid, backend, poisson; totalenergy = 1, rng, kwar
     # But since our divergence is discrete, defined through staggered finite
     # differences, this is no longer exactly the case. So we project again
     # to correct for this (minor?) error.
-    project!(u, p, poisson)
+    project!(u, poisson)
 
     # The velocity now has
     # the correct spectrum,
@@ -713,9 +712,7 @@ function dnsaid(setup)
     # Allocate fields
     poisson_dns = poissonsolver(g_dns, backend)
     poisson_les = poissonsolver(g_les, backend)
-    p_dns = Field(g_dns, backend)
     p_dns2 = Field(g_dns, backend)
-    p_les = Field(g_les, backend)
     u_dns = randomfield(profile, g_dns, backend, poisson_dns; rng = Xoshiro(0), args...)
     du_dns = vectorfield(g_dns, backend)
     du_dns2 = vectorfield(g_dns, backend)
@@ -774,31 +771,21 @@ function dnsaid(setup)
         # DNS stuff
         σ_dns = stresstensor(u_dns, visc)
         tensordivergence!(du_dns, σ_dns, false)
-        project!(du_dns, p_dns, poisson_dns)
+        project!(du_dns, poisson_dns)
         r = if D == 2
-            r11 = LazyField((σ_dns, p_dns, I) -> σ_dns[1][I] + p_dns[I], g_dns, σ_dns, p_dns)
+            r11 = LazyField((σ_dns, p_dns, I) -> σ_dns[1][I] + p_dns[I], g_dns, σ_dns, poisson_dns.p)
             r22 = LazyField(
                 (σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I],
                 g_dns,
                 σ_dns,
-                p_dns,
+                poisson_dns.p,
             )
             r12 = σ_dns[3]
             r11, r22, r12
         else
-            r11 = LazyField((σ_dns, p_dns, I) -> σ_dns[1][I] + p_dns[I], g_dns, σ_dns, p_dns)
-            r22 = LazyField(
-                (σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I],
-                g_dns,
-                σ_dns,
-                p_dns,
-            )
-            r33 = LazyField(
-                (σ_dns, p_dns, I) -> σ_dns[3][I] + p_dns[I],
-                g_dns,
-                σ_dns,
-                p_dns,
-            )
+            r11 = LazyField((σ_dns, p_dns, I) -> σ_dns[1][I] + p_dns[I], g_dns, σ_dns, poisson_dns.p)
+            r22 = LazyField((σ_dns, p_dns, I) -> σ_dns[2][I] + p_dns[I], g_dns, σ_dns, poisson_dns.p)
+            r33 = LazyField((σ_dns, p_dns, I) -> σ_dns[3][I] + p_dns[I], g_dns, σ_dns, poisson_dns.p)
             r12 = σ_dns[4]
             r23 = σ_dns[5]
             r31 = σ_dns[6]
@@ -903,13 +890,13 @@ function dnsaid(setup)
         # No-model
         σ_nomo = stresstensor(u_nomo, visc)
         tensordivergence!(du_les, σ_nomo, false)
-        project!(du_les, p_les, poisson_les)
+        project!(du_les, poisson_les)
         foreach(i -> axpy!(dt, du_les[i].data, u_nomo[i].data), 1:D)
 
         # Classic
         σ_dns2 = stresstensor(u_dnsΔH, visc)
         tensordivergence!(du_dns2, σ_dns2, false)
-        project!(du_dns2, p_dns2, poisson_dns)
+        project!(du_dns2, poisson_dns)
         r2 = if D == 2
             σ2_11, σ2_22, σ2_12 = σ_dns2
             r2_11 = LazyField(
@@ -962,7 +949,7 @@ function dnsaid(setup)
         end
         σ_c = stresstensor(u_c, visc)
         tensordivergence!(du_les, σ_c, false) # Overwrite du
-        project!(du_les, p_les, poisson_les) # σ_both is projected
+        project!(du_les, poisson_les) # σ_both is projected
         r_both =
             map((r1, r2) -> LazyField((r1, r2, I) -> r1[I] - r2[I], g_les, r1, r2), rΔH, r2)
         tensordivergence!(du_les, r_both, true) # Add to existing du, don't project
@@ -977,7 +964,7 @@ function dnsaid(setup)
             σ2,
         )
         tensordivergence!(du_les, σ_both, false) # Overwrite du
-        project!(du_les, p_les, poisson_les) # σ_both is projected
+        project!(du_les, poisson_les) # σ_both is projected
         tensordivergence!(du_les, rΔH, true) # Add to existing du, don't project
         foreach(i -> axpy!(dt, du_les[i].data, u_cf[i].data), 1:D)
 
@@ -991,7 +978,7 @@ function dnsaid(setup)
             σ2,
         )
         tensordivergence!(du_les, σ_both, false) # Overwrite du
-        project!(du_les, p_les, poisson_les) # σ_both is projected
+        project!(du_les, poisson_les) # σ_both is projected
         tensordivergence_nonsym!(du_les, rΔHi, true) # Add to existing du, don't project
         foreach(i -> axpy!(dt, du_les[i].data, u_cfd[i].data), 1:D)
 
@@ -1004,7 +991,7 @@ function dnsaid(setup)
             σ2,
         )
         tensordivergence!(du_les, σ_both, false) # Overwrite du
-        project!(du_les, p_les, poisson_les) # σ_both is projected
+        project!(du_les, poisson_les) # σ_both is projected
         tensordivergence!(du_les, rΔHi_symm, true) # Add to existing du, don't project
         foreach(i -> axpy!(dt, du_les[i].data, u_cfd_symm[i].data), 1:D)
 
@@ -1176,7 +1163,7 @@ function step_ΔHπ_classic!(u_les, u_dns, du, p, poisson, visc, dt, GΔH)
         σ2,
     )
     tensordivergence!(du, σ_all, false)
-    project!(du_les, p, poisson)
+    project!(du_les, poisson)
     foreach(i -> axpy!(dt, du[i].data, u_les[i].data), 1:D)
 end
 
@@ -1195,8 +1182,6 @@ function dnsaid_project(setup)
     # Allocate fields
     poisson_dns = poissonsolver(g_dns, backend)
     poisson_les = poissonsolver(g_les, backend)
-    p_dns = Field(g_dns, backend)
-    p_les = Field(g_les, backend)
     u_dns = randomfield(profile, g_dns, backend, poisson_dns; rng = Xoshiro(0), args...)
     du_dns = vectorfield(g_dns, backend)
     du_les = vectorfield(g_les, backend)
@@ -1227,7 +1212,7 @@ function dnsaid_project(setup)
         @info "t = $(round(t; sigdigits=4)) / $(round(twarm; sigdigits=4))"
 
         # DNS stuff
-        step_forwardeuler!(u_dns, du_dns, p_dns, poisson_dns, visc, dt)
+        step_forwardeuler!(u_dns, du_dns, poisson_dns, visc, dt)
     end
 
     # Initialize LES fields
@@ -1235,7 +1220,7 @@ function dnsaid_project(setup)
         ubari = lazyfilter(u_dns[i], GΔH)
         coarsegrain!(ubar_coarse[i], ubari, faces[i])
     end
-    project!(ubar_coarse, p_les, poisson_les)
+    project!(ubar_coarse, poisson_les)
 
     for i = 1:D
         copyto!(u_nomo[i].data, ubar_coarse[i].data)
@@ -1257,8 +1242,8 @@ function dnsaid_project(setup)
         # DNS stuff
         σ_dns = stresstensor(u_dns, visc)
         tensordivergence!(du_dns, σ_dns, false)
-        project!(du_dns, p_dns, poisson_dns)
-        r = get_r(σ_dns, p_dns, g_dns)
+        project!(du_dns, poisson_dns)
+        r = get_r(σ_dns, poisson_dns.p, g_dns)
         rΔHi = get_rΔHi(r, GΔHi, g_dns, g_les)
         rΔHi_symm = symmetrize(rΔHi, g_les)
 
@@ -1270,10 +1255,10 @@ function dnsaid_project(setup)
             ubari = lazyfilter(u_dns[i], GΔH)
             coarsegrain!(ubar_coarse[i], ubari, faces[i])
         end
-        project!(ubar_coarse, p_les, poisson_les)
+        project!(ubar_coarse, poisson_les)
 
         # No-model
-        step_forwardeuler!(u_nomo, du_les, p_les, poisson_les, visc, dt)
+        step_forwardeuler!(u_nomo, du_les, poisson_les, visc, dt)
 
         # Classic
         σ_dns2 = stresstensor(u_dnsΔH, visc)
@@ -1292,7 +1277,7 @@ function dnsaid_project(setup)
             σ2,
         )
         tensordivergence!(du_les, σ_all, false)
-        project!(du_les, p_les, poisson_les)
+        project!(du_les, poisson_les)
         foreach(i -> axpy!(dt, du_les[i].data, u_c[i].data), 1:D)
 
         # Classic+Flux
@@ -1311,7 +1296,7 @@ function dnsaid_project(setup)
             σ2,
         )
         tensordivergence!(du_les, σ_all, false)
-        project!(du_les, p_les, poisson_les)
+        project!(du_les, poisson_les)
         foreach(i -> axpy!(dt, du_les[i].data, u_cf[i].data), 1:D)
 
         # Classic+Flux+Div
@@ -1325,7 +1310,7 @@ function dnsaid_project(setup)
         )
         tensordivergence!(du_les, σ_both, false) # Overwrite du
         tensordivergence_nonsym!(du_les, rΔHi, true) # Add to existing du, don't project
-        project!(du_les, p_les, poisson_les)
+        project!(du_les, poisson_les)
         foreach(i -> axpy!(dt, du_les[i].data, u_cfd[i].data), 1:D)
 
         # Classic+Flux+Div symmetrized
@@ -1338,7 +1323,7 @@ function dnsaid_project(setup)
         )
         tensordivergence!(du_les, σ_both, false) # Overwrite du
         tensordivergence!(du_les, rΔHi_symm, true) # Add to existing du
-        project!(du_les, p_les, poisson_les) # σ_both is projected
+        project!(du_les, poisson_les) # σ_both is projected
         foreach(i -> axpy!(dt, du_les[i].data, u_cfd_symm[i].data), 1:D)
 
         # DNS
@@ -1350,7 +1335,7 @@ function dnsaid_project(setup)
         ubari = lazyfilter(u_dns[i], GΔH)
         coarsegrain!(ubar_coarse[i], ubari, faces[i])
     end
-    project!(ubar_coarse, p_les, poisson_les)
+    project!(ubar_coarse, poisson_les)
 
     (; u_dns, u_les = ubar_coarse, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
