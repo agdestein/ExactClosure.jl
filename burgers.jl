@@ -4,7 +4,6 @@
 
 using CairoMakie
 using ExactClosure: Burgers as B
-using JLD2
 using Random
 # using WGLMakie
 using GLMakie
@@ -19,9 +18,7 @@ let
     # rng = Xoshiro(0)
     rng = Random.default_rng()
     ustart = B.randomfield(rng, g, kpeak, initialenergy)
-    uh = copy(ustart)
-    sh = zero(ustart)
-    xh = points_stag(g)
+    xh = B.points_stag(g)
     fig = Figure(; size = (400, 340))
     ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u")
     lines!(ax, xh, ustart |> Array; label = "Initial")
@@ -50,7 +47,7 @@ let
         Δ = Δ_ratio * H
         I = round(Int, H / 2h)
         f = fill(1 / (2I + 1), 2I + 1)
-        J, g = gaussian_weights(gh, Δ; nσ = 3.3)
+        J, g = B.gaussian_weights(gh, Δ; nσ = 3.3)
         K = I + J
         d = map((-K):K) do k
             sum((-J):J) do j
@@ -62,8 +59,6 @@ let
                 end
             end
         end
-        II = ((-I):I) * h / H
-        JJ = ((-J):J) * h / H
         KK = ((-K):K) * h / H
         ff = [zeros(K - I); f; zeros(K - I)] # Pad with zeros
         gg = [zeros(K - J); g; zeros(K - J)] # Pad with zeros
@@ -126,7 +121,7 @@ let
                 J = round(Int, Δ / h / 2)
                 g = fill(1 / (2J + 1), 2J + 1)
             elseif itype == 2
-                J, g = gaussian_weights(gh, Δ; nσ = 3.3)
+                J, g = B.gaussian_weights(gh, Δ; nσ = 3.3)
             end
             K = I + J
             d = map((-K):K) do k
@@ -139,12 +134,9 @@ let
                     end
                 end
             end
-            II = ((-I):I) * h / H
-            JJ = ((-J):J) * h / H
             KK = ((-K):K) * h / H
             ff = [zeros(K - I); f; zeros(K - I)] # Pad with zeros
             gg = [zeros(K - J); g; zeros(K - J)] # Pad with zeros
-            islast = iratio == length(Δ_ratios)
             typelast = itype == 2
             ax = Axis(
                 fig[itype, iratio];
@@ -198,7 +190,6 @@ let
         end
         linkxaxes!(axes...)
     end
-    # rowgap!(fig.layout, 10)
     save("$(plotdir)/burgers_filters.pdf", fig; backend = CairoMakie)
     fig
 end

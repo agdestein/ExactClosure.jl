@@ -61,8 +61,6 @@ function timestep!(g, u, s, visc, dt)
 end
 
 function rk4_timestep!(g, u, uold, k1, k2, k3, k4, visc, dt)
-
-    # RK4 step
     copyto!(uold, u)
     rhs!(k1, u, visc, g)
     AK.foreachindex(u) do i
