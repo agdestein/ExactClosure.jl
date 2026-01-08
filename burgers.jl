@@ -13,15 +13,16 @@ setup |> pairs
 
 # Plot some initial conditions
 let
-    (; L, nh, kpeak, initialenergy, visc, tstop, plotdir) = setup
+    (; L, nh, kpeak, initialenergy, plotdir) = setup
     g = B.Grid(L, nh)
+    backend = B.defaultbackend()
     # rng = Xoshiro(0)
     rng = Random.default_rng()
-    ustart = B.randomfield(rng, g, kpeak, initialenergy)
+    ustart = B.randomfield(rng, g, kpeak, initialenergy, backend)
     xh = B.points_stag(g)
     fig = Figure(; size = (400, 340))
     ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u")
-    lines!(ax, xh, ustart |> Array; label = "Initial")
+    lines!(ax, xh, ustart.data |> Array; label = "Initial")
     Legend(
         fig[0, 1],
         ax;
@@ -197,23 +198,23 @@ end
 # Plot Burgers solution
 let
     (; L, nh, kpeak, initialenergy, visc, tstop, plotdir) = setup
+    backend = B.defaultbackend()
     g = B.Grid(L, nh)
     rng = Xoshiro(1)
-    ustart = B.randomfield(rng, g, kpeak, initialenergy)
+    ustart = B.randomfield(rng, g, kpeak, initialenergy, backend)
     uh = copy(ustart)
-    sh = zero(ustart)
     t = 0.0
     while t < tstop
-        dt = 0.3 * B.cfl(g, uh, visc) # Propose timestep
+        dt = 0.3 * B.cfl(uh, visc) # Propose timestep
         dt = min(dt, tstop - t) # Don't overstep
-        B.timestep!(g, uh, sh, visc, dt) # Perform timestep
+        B.timestep!(uh, visc, dt) # Perform timestep
         t += dt
     end
     xh = B.points_stag(g)
     fig = Figure(; size = (400, 340))
     ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u")
-    lines!(ax, xh, ustart |> Array; label = "Initial")
-    lines!(ax, xh, uh |> Array; label = "Final")
+    lines!(ax, xh, ustart.data |> Array; label = "Initial")
+    lines!(ax, xh, uh.data |> Array; label = "Final")
     Legend(
         fig[0, 1],
         ax;
@@ -228,6 +229,7 @@ let
 end
 
 # DNS-aided LES
+setup = B.getsetup()
 B.run_dns_aided_les(setup)
 
 series = B.load_dns_aided_les(setup);
