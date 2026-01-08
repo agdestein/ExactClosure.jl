@@ -5,6 +5,7 @@ using ..ExactClosure
 
 using Adapt
 using CairoMakie
+using CUDA
 using FFTW
 using JLD2
 using LinearAlgebra
@@ -207,7 +208,7 @@ linear_profile(rng, k, kpeak) = k > 0 ? k^-2.0 * exp(2π * im * rand(rng)) : 0.0
 
 function randomfield(rng, g, kpeak, totalenergy)
     k = 0:div(g.n, 2)
-    c = bump_profile.(rng, k, kpeak)
+    c = map(k -> bump_profile(rng, k, kpeak), k)
     u = irfft(c * g.n, g.n)
     etot = sum(abs2, u) / 2 * spacing(g)
     sqrt(totalenergy / etot) * u
@@ -243,6 +244,38 @@ function build_doublekernel(F, G)
         end
     end
     K, w_double
+end
+
+getsetup() = let
+    L = 2π
+    nh = 100 * 3^3 * 5
+    nH = 100 .* 3 .^ (1:3)
+    # Δ_ratios = [0, 1, 2]
+    Δ_ratios = [2]
+    visc = 5e-4
+    kpeak = 10
+    initialenergy = 2.0
+    tstop = 0.2
+    nsample = 1000
+    lesfiltertype = :gaussian
+    backend = CUDA.functional() ? CUDABackend() : Burgers.AK.KernelAbstractions.CPU()
+    outdir = joinpath(@__DIR__, "..", "output", "Burgers") |> mkpath
+    plotdir = "$outdir/figures" |> mkpath
+    (;
+        L,
+        nh,
+        nH,
+        Δ_ratios,
+        visc,
+        kpeak,
+        initialenergy,
+        tstop,
+        nsample,
+        lesfiltertype,
+        backend,
+        outdir,
+        plotdir,
+    )
 end
 
 run_dns_aided_les(setup) =

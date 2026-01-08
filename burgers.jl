@@ -2,65 +2,23 @@
 #
 # Run with `julia -t auto` to run the simulations in parallel.
 
-# This is just a hack for "go to definition" to work in editor.
-if false
-    include("src/ExactClosure.jl")
-    using .ExactClosure
-end
-
 using CairoMakie
-using CUDA
-using ExactClosure
-using ExactClosure.Burgers
-using FFTW
+using ExactClosure: Burgers as B
 using JLD2
-using KernelDensity
-using LinearAlgebra
 using Random
-using Statistics
 # using WGLMakie
 using GLMakie
 
-setup = let
-    L = 2π
-    nh = 100 * 3^3 * 5
-    nH = 100 .* 3 .^ (1:3)
-    Δ_ratios = [0, 1, 2]
-    visc = 5e-4
-    kpeak = 10
-    initialenergy = 2.0
-    tstop = 0.1
-    nsample = 1000
-    lesfiltertype = :gaussian
-    backend = CUDA.functional() ? CUDABackend() : Burgers.AK.KernelAbstractions.CPU()
-    # backend = Burgers.AK.KernelAbstractions.CPU()
-    outdir = joinpath(@__DIR__, "output", "Burgers") |> mkpath
-    plotdir = "$outdir/figures" |> mkpath
-    (;
-        L,
-        nh,
-        nH,
-        Δ_ratios,
-        visc,
-        kpeak,
-        initialenergy,
-        tstop,
-        nsample,
-        lesfiltertype,
-        backend,
-        outdir,
-        plotdir,
-    )
-end
+setup = B.getsetup()
 setup |> pairs
 
 # Plot some initial conditions
 let
     (; L, nh, kpeak, initialenergy, visc, tstop, plotdir) = setup
-    g = Grid(L, nh)
+    g = B.Grid(L, nh)
     # rng = Xoshiro(0)
     rng = Random.default_rng()
-    ustart = randomfield(rng, g, kpeak, initialenergy)
+    ustart = B.randomfield(rng, g, kpeak, initialenergy)
     uh = copy(ustart)
     sh = zero(ustart)
     xh = points_stag(g)
@@ -86,7 +44,7 @@ let
     nh = 8000
     Δ_ratios = [1, 2, 3]
     for (iratio, Δ_ratio) in enumerate(Δ_ratios)
-        gh = Grid(L, nh)
+        gh = B.Grid(L, nh)
         h = L / nh
         H = 150 * h
         Δ = Δ_ratio * H
@@ -158,7 +116,7 @@ let
     Δ_ratios = [1, 2, 3]
     for (iratio, Δ_ratio) in enumerate(Δ_ratios)
         axes = map([1, 2]) do itype
-            gh = Grid(L, nh)
+            gh = B.Grid(L, nh)
             h = L / nh
             H = 150 * h
             Δ = Δ_ratio * H
@@ -248,19 +206,19 @@ end
 # Plot Burgers solution
 let
     (; L, nh, kpeak, initialenergy, visc, tstop, plotdir) = setup
-    g = Grid(L, nh)
-    rng = Xoshiro(0)
-    ustart = randomfield(rng, g, kpeak, initialenergy)
+    g = B.Grid(L, nh)
+    rng = Xoshiro(1)
+    ustart = B.randomfield(rng, g, kpeak, initialenergy)
     uh = copy(ustart)
     sh = zero(ustart)
     t = 0.0
     while t < tstop
-        dt = 0.3 * cfl(g, uh, visc) # Propose timestep
+        dt = 0.3 * B.cfl(g, uh, visc) # Propose timestep
         dt = min(dt, tstop - t) # Don't overstep
-        timestep!(g, uh, sh, visc, dt) # Perform timestep
+        B.timestep!(g, uh, sh, visc, dt) # Perform timestep
         t += dt
     end
-    xh = points_stag(g)
+    xh = B.points_stag(g)
     fig = Figure(; size = (400, 340))
     ax = Axis(fig[1, 1]; xlabel = "x", ylabel = "u")
     lines!(ax, xh, ustart |> Array; label = "Initial")
@@ -279,22 +237,22 @@ let
 end
 
 # DNS-aided LES
-Burgers.run_dns_aided_les(setup)
+B.run_dns_aided_les(setup)
 
-series = Burgers.load_dns_aided_les(setup);
+series = B.load_dns_aided_les(setup);
 
 # Compute relative errors
-errseries = Burgers.compute_errors(series);
+errseries = B.compute_errors(series);
 errseries |> pairs
 
-Burgers.write_error_table(errseries, setup)
+B.write_error_table(errseries, setup)
 
 # Compute spectra
-specseries = Burgers.compute_spectra(series, setup);
+specseries = B.compute_spectra(series, setup);
 
-Burgers.plot_spectra(specseries, setup)
+B.plot_spectra(specseries, setup)
 
 # Compute dissipation coefficients
-diss = Burgers.compute_dissipation(series, setup);
+diss = B.compute_dissipation(series, setup);
 
-Burgers.plot_dissipation(diss, setup)
+B.plot_dissipation(diss, setup)

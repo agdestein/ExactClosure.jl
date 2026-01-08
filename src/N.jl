@@ -1198,6 +1198,17 @@ step_ΔHπ_classic_flux_div_symm!(u_les, ubar_coarse, u_dns, r_dns, du_les, pois
     foreach(i -> axpy!(dt, du_les[i].data, u_les[i].data), 1:D)
 end
 
+apply_ΔHπ(ubar, u, poisson, GΔH) = let
+    g = ubar[1].grid
+    D = dim(g)
+    (; faces) = get_positions(g)
+    for i in 1:D
+        ubari = lazyfilter(u[i], GΔH)
+        coarsegrain!(ubar[i], ubari, faces[i])
+    end
+    project!(ubar, poisson)
+end
+
 dnsaid_project(setup) = let
     (; l, n_dns, n_les, visc, Δ_ratio, nσ) = setup
     twarm = 0.1
@@ -1228,9 +1239,6 @@ dnsaid_project(setup) = let
     kernels = get_kernels(g_dns, g_les, Δ_ratio, nσ) |> adapt(backend)
     (; GΔH, GΔHi) = kernels
 
-    # Position indicators for staggered grid
-    (; faces, center, corner2D, corners3D) = get_positions(g_dns)
-
     # Warmup
     t = 0.0
     itime = 0
@@ -1247,11 +1255,7 @@ dnsaid_project(setup) = let
     end
 
     # Initialize LES fields
-    for i in 1:D
-        ubari = lazyfilter(u_dns[i], GΔH)
-        coarsegrain!(ubar_coarse[i], ubari, faces[i])
-    end
-    project!(ubar_coarse, poisson_les)
+    apply_ΔHπ(ubar_coarse, u_dns, poisson_les, GΔH)
 
     for i in 1:D
         copyto!(u_nomo[i].data, ubar_coarse[i].data)
@@ -1277,19 +1281,13 @@ dnsaid_project(setup) = let
         r = get_r(σ_dns, poisson_dns.p, g_dns)
 
         # Filter
-        for i in 1:D
-            ubari = lazyfilter(u_dns[i], GΔH)
-            coarsegrain!(ubar_coarse[i], ubari, faces[i])
-        end
-        project!(ubar_coarse, poisson_les)
+        apply_ΔHπ(ubar_coarse, u_dns, poisson_les, GΔH)
 
         # LES steps
         step_forwardeuler!(u_nomo, du_les, poisson_les, visc, dt)
         step_ΔHπ_classic!(u_c, u_dns, du_les, poisson_les, visc, dt, GΔH)
         step_ΔHπ_classic_flux!(u_cf, ubar_coarse, u_dns, du_les, poisson_les, visc, dt, GΔH)
-        step_ΔHπ_classic_flux_div!(
-            u_cfd, ubar_coarse, u_dns, r, du_les, poisson_les, visc, dt, GΔH, GΔHi,
-        )
+        step_ΔHπ_classic_flux_div!(u_cfd, ubar_coarse, u_dns, r, du_les, poisson_les, visc, dt, GΔH, GΔHi)
         step_ΔHπ_classic_flux_div_symm!(u_cfd_symm, ubar_coarse, u_dns, r, du_les, poisson_les, visc, dt, GΔH, GΔHi)
 
         # DNS
@@ -1297,11 +1295,7 @@ dnsaid_project(setup) = let
     end
 
     # Filter
-    for i in 1:D
-        ubari = lazyfilter(u_dns[i], GΔH)
-        coarsegrain!(ubar_coarse[i], ubari, faces[i])
-    end
-    project!(ubar_coarse, poisson_les)
+    apply_ΔHπ(ubar_coarse, u_dns, poisson_les, GΔH)
 
     (; u_dns, u_les = ubar_coarse, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
@@ -1318,7 +1312,6 @@ compute_errors(uaid) = let
 end
 
 plot_spectra(uaid) = let
-    visc = 3.0e-4
     g_dns = uaid.u_dns[1].grid
     g_les = uaid.u_les[1].grid
     backend = defaultbackend()
