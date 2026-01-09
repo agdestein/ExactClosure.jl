@@ -109,8 +109,8 @@ rhs!(du, u, visc) = let
 end
 
 "Perform one time step (inplace)."
-timestep!(u, visc, dt) = let
-    s = stress(u, visc)
+timestep!(u, s, visc, dt) = let
+    materialize!(s, stress(u, visc))
     myforeachindex(u.data) do i
         @inline
         @inbounds u[i] += dt * δ_coll(s, i)
@@ -241,11 +241,11 @@ getsetup() = let
     visc = 5e-4
     kpeak = 10
     initialenergy = 2.0
-    tstop = 0.2
-    nsample = 100O
+    tstop = 0.1
+    nsample = 1000
     lesfiltertype = :gaussian
     backend = CUDA.functional() ? CUDABackend() : KernelAbstractions.CPU()
-    outdir = joinpath(@__DIR__, "..", "output", "Burgers") |> mkpath
+    outdir = joinpath(@__DIR__, "..", "output", "Burgers_t=$(tstop)") |> mkpath
     plotdir = "$outdir/figures" |> mkpath
     (;
         L,
@@ -266,7 +266,7 @@ end
 
 run_dns_aided_les(setup) =
     for (nH, Δ_ratio) in Iterators.product(setup.nH, setup.Δ_ratios)
-        (; L, nh, visc, kpeak, initialenergy, tstop, nsample, backend, outdir) = setup
+        (; L, nh, visc, kpeak, initialenergy, tstop, nsample, backend, lesfiltertype, outdir) = setup
         cpu = KernelAbstractions.CPU()
         gh = Grid(L, nh)
         gH = Grid(L, nH)
@@ -316,7 +316,7 @@ run_dns_aided_les(setup) =
                 Δ,
                 tstop,
                 cfl_factor = 0.3,
-                lesfiltertype = :gaussian,
+                lesfiltertype,
             )
             for key in keys(fields)
                 copyto!(view(fields[key].u, :, i), sols[key].data)
@@ -520,22 +520,22 @@ function compute_dissipation(series, setup)
 end
 
 function create_dns(setup; cfl_factor)
-    (; L, nh, kpeak, initialenergy, visc, tstop, nsample) = setup
+    (; L, nh, kpeak, initialenergy, visc, tstop, nsample, backend) = setup
     g = Grid(L, nh)
     Ustart = zeros(nh, nsample)
     U = zeros(nh, nsample)
     for i = 1:nsample
         @info "DNS sample $i of $nsample"
-        ustart = randomfield(Xoshiro(i), g, kpeak, initialenergy)
+        ustart = randomfield(Xoshiro(i), g, kpeak, initialenergy, backend)
         u = copy(ustart)
         s = zero(u)
         # uold, k1, k2, k3, k4 = zero(u), zero(u), zero(u), zero(u), zero(u)
         t = 0.0
         while t < tstop
-            dt = cfl_factor * cfl(g, u, visc) # Propose timestep
+            dt = cfl_factor * cfl(u, visc) # Propose timestep
             dt = min(dt, tstop - t) # Don't overstep
-            timestep!(g, u, s, visc, dt) # Perform timestep
-            # rk4_timestep!(g, u, uold, k1, k2, k3, k4, visc, dt)
+            timestep!(u, s, visc, dt) # Perform timestep
+            # rk4_timestep!(u, uold, k1, k2, k3, k4, visc, dt)
             t += dt
         end
         Ustart[:, i] = ustart
@@ -545,12 +545,13 @@ function create_dns(setup; cfl_factor)
 end
 
 function smagorinsky_fields(setup, dnsdata; lesfiltertype)
-    (; L, nh, nH, visc, Δ_ratio) = setup
-    map(nH) do nH
+    (; L, nh, nH, visc, Δ_ratios) = setup
+    cpu = KernelAbstractions.CPU()
+    map(Iterators.product(Δ_ratios, nH)) do (Δ_ratio, nH)
+
         gh = Grid(L, nh)
         gH = Grid(L, nH)
         _, U = dnsdata
-        # U, _ = dnsdata
 
         H = spacing(gH)
         Δ = H * Δ_ratio
@@ -570,20 +571,19 @@ function smagorinsky_fields(setup, dnsdata; lesfiltertype)
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
         # Allocate arrays
-        σh = zeros(gh.n)
-        σh_double1 = zeros(gh.n)
-        σh_double2 = zeros(gh.n)
-        uh_double = zeros(gh.n)
+        uh = Field(gh, cpu)
+        uh_double = Field(gh, cpu)
+        σh_double1 = Field(gh, cpu)
 
-        sh = zeros(gh.n)
-        th = zeros(gh.n)
-        D_sh = zeros(gh.n)
-        D_th = zeros(gh.n)
+        sh = Field(gh, cpu)
+        th = Field(gh, cpu)
+        D_sh = Field(gh, cpu)
+        D_th = Field(gh, cpu)
 
-        sH = zeros(gh.n)
-        tH = zeros(gh.n)
-        D_sH = zeros(gh.n)
-        D_tH = zeros(gh.n)
+        sH = Field(gh, cpu)
+        tH = Field(gh, cpu)
+        D_sH = Field(gh, cpu)
+        D_tH = Field(gh, cpu)
 
         Sh = zero(U)
         Th = zero(U)
@@ -599,32 +599,32 @@ function smagorinsky_fields(setup, dnsdata; lesfiltertype)
 
         # Compute classical sub-filter stress (on DNS grid)
         foreach(axes(U, 2)) do j
-            uh = view(U, :, j)
+
+            j % 10 == 0 && @info "Classic, Δ/h = $Δ_ratio, N = $nH, sample $j"
+
+            copyto!(uh.data, view(U, :, j))
 
             # Compute sub-filter stress
-            myforeachindex(uh) do i
+            σh = stress(uh, visc)
+            materialize!(uh_double, lazyfilter(uh, doublekernel))
+            materialize!(σh_double1, lazyfilter(σh, doublekernel))
+            σh_double2 = stress(uh_double, visc)
+            myforeachindex(th.data) do i
                 @inline
-                σh[i] = stress(gh, uh, visc, i)
-            end
-            convolution!(gh, doublekernel, σh_double1, σh)
-            convolution!(gh, doublekernel, uh_double, uh)
-            myforeachindex(uh) do i
-                @inline
-                σh_double2[i] = stress(gh, uh_double, visc, i)
                 th[i] = σh_double1[i] - σh_double2[i]
             end
 
             # Compute Smagorinsky stress
-            myforeachindex(uh_double) do i
+            myforeachindex(sh.data) do i
                 @inline
-                δu = δ_stag(gh, uh_double, i)
+                δu = δ_stag(uh_double, i)
                 sh[i] = -(Δ^2 + H^2) * abs(δu) * δu
             end
 
             # Compute dissipation coefficients
-            myforeachindex(uh_double) do i
+            myforeachindex(D_sh.data) do i
                 @inline
-                δu = δ_stag(gh, uh_double, i)
+                δu = δ_stag(uh_double, i)
                 D_sh[i] = sh[i] * δu # Smag
                 D_th[i] = th[i] * δu # True
             end
@@ -638,40 +638,40 @@ function smagorinsky_fields(setup, dnsdata; lesfiltertype)
 
         # Compute discretization-consistent sub-filter stress (on DNS grid)
         foreach(axes(U, 2)) do j
-            uh = view(U, :, j)
+
+            j % 10 == 0 && @info "Discrete, Δ/h = $Δ_ratio, N = $nH, sample $j"
+
+            copyto!(uh.data, view(U, :, j))
 
             # Compute sub-filter stress
-            myforeachindex(uh) do i
-                @inline
-                σh[i] = stress(gh, uh, visc, i)
-            end
-            convolution!(gh, leskernel, σh_double1, σh)
-            convolution!(gh, doublekernel, uh_double, uh)
-            myforeachindex(uh) do i
+            σh = stress(uh, visc)
+            materialize!(uh_double, lazyfilter(uh, doublekernel))
+            materialize!(σh_double1, lazyfilter(σh, leskernel))
+            myforeachindex(tH.data) do i
                 @inline
                 # Coarse-grid stress (on the fine grid)
-                uleft = uh_double[i-a-1|>gh]
-                uright = uh_double[i+a|>gh]
-                σh_double2[i] =
+                uleft = uh_double[i-a-1]
+                uright = uh_double[i+a]
+                σh_double2i =
                     -(uleft + uright)^2 / 8 + visc * (uright - uleft) / spacing(gH)
-                tH[i] = σh_double1[i] - σh_double2[i]
+                tH[i] = σh_double1[i] - σh_double2i
             end
 
             # Compute Smagorinsky stress
-            myforeachindex(uh_double) do i
+            myforeachindex(sH.data) do i
                 @inline
                 # Coarse-grid derivative (on fine grid)
-                uleft = uh_double[i-a-1|>gh]
-                uright = uh_double[i+a|>gh]
+                uleft = uh_double[i-a-1]
+                uright = uh_double[i+a]
                 δu = (uright - uleft) / spacing(gH)
                 sH[i] = -(Δ^2 + H^2) * abs(δu) * δu
             end
 
             # Compute dissipation coefficients
-            myforeachindex(uh_double) do i
+            myforeachindex(D_sH.data) do i
                 @inline
-                uleft = uh_double[i-a-1|>gh]
-                uright = uh_double[i+a|>gh]
+                uleft = uh_double[i-a-1]
+                uright = uh_double[i+a]
                 δu = (uright - uleft) / spacing(gH)
                 D_sH[i] = sH[i] * δu # Smag
                 D_tH[i] = tH[i] * δu # True
@@ -687,9 +687,10 @@ function smagorinsky_fields(setup, dnsdata; lesfiltertype)
     end
 end
 
-function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
-    (; L, nh, nH, visc, tstop, Δ_ratio) = setup
-    map(enumerate(nH)) do (igrid, nH)
+function solve_smagorinsky(setup, dnsdata, smagcoeffs)
+    (; L, nh, visc, tstop, Δ_ratios, lesfiltertype, backend) = setup
+    map(Iterators.product(Δ_ratios, eachindex(setup.nH))) do (Δ_ratio, igrid)
+        nH = setup.nH[igrid]
         gh = Grid(L, nh)
         gH = Grid(L, nH)
         H = spacing(gH)
@@ -711,55 +712,59 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
         end
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
-        ubar = zeros(gH.n)
+        ubar = Field(gH, backend)
         Ubar = zeros(gH.n, size(ustart, 2))
 
-        ubar0 = zero(ubar)
-        k1 = zero(ubar)
-        k2 = zero(ubar)
-        k3 = zero(ubar)
-        k4 = zero(ubar)
+        u = Field(gh, backend)
 
-        s = zeros(gH.n)
+        ubar0 = similar(ubar)
+        k1 = similar(ubar)
+        k2 = similar(ubar)
+        k3 = similar(ubar)
+        k4 = similar(ubar)
+
+        s = similar(ubar)
 
         for j in axes(ustart, 2)
-            coarsegrain_convolve_stag!(gH, gh, ubar, ustart[:, j], doublekernel)
+            copyto!(u.data, view(ustart, :, j))
+            materialize!(ubar,
+                 lazycoarsegrain(gH, lazyfilter(u, doublekernel), true))
 
-            @info "nH = $nH, sample $j of $(size(ustart, 2))"
+            @info "Δ/H = $(Δ_ratio), nH = $nH, sample $j of $(size(ustart, 2))"
 
             cfl_factor = 0.3
             t = 0.0
             while t < tstop
-                dt = cfl_factor * cfl(gH, ubar, visc)
+                dt = cfl_factor * cfl(ubar, visc)
                 dt = min(dt, tstop - t) # Don't overstep
                 t += dt
 
                 # # Forward Euler step
-                # smagorinsky_rhs!(k1, u, s, gH, visc, C)
-                # myforeachindex(ubar) do i
+                # smagorinsky_rhs!(k1, u, visc, C)
+                # myforeachindex(ubar.data) do i
                 #     @inline
                 #     ubar[i] += dt * k1[i]
                 # end
 
                 # RK4 step
-                copyto!(ubar0, ubar)
-                smagorinsky_rhs!(k1, ubar, s, gH, visc, C)
-                myforeachindex(ubar) do i
+                copyto!(ubar0.data, ubar.data)
+                smagorinsky_rhs!(k1, ubar, visc, C)
+                myforeachindex(ubar.data) do i
                     @inline
                     ubar[i] = ubar0[i] + dt / 2 * k1[i]
                 end
-                smagorinsky_rhs!(k2, ubar, s, gH, visc, C)
-                myforeachindex(ubar) do i
+                smagorinsky_rhs!(k2, ubar, visc, C)
+                myforeachindex(ubar.data) do i
                     @inline
                     ubar[i] = ubar0[i] + dt / 2 * k2[i]
                 end
-                smagorinsky_rhs!(k3, ubar, s, gH, visc, C)
-                myforeachindex(ubar) do i
+                smagorinsky_rhs!(k3, ubar, visc, C)
+                myforeachindex(ubar.data) do i
                     @inline
                     ubar[i] = ubar0[i] + dt * k3[i]
                 end
-                smagorinsky_rhs!(k4, ubar, s, gH, visc, C)
-                myforeachindex(ubar) do i
+                smagorinsky_rhs!(k4, ubar, visc, C)
+                myforeachindex(ubar.data) do i
                     @inline
                     ubar[i] = ubar0[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
                 end
@@ -771,16 +776,17 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs; lesfiltertype)
     end
 end
 
-function smagorinsky_rhs!(du, u, s, g, visc, C)
-    myforeachindex(u) do i
+function smagorinsky_rhs!(du, u, visc, C)
+    s = stress(u, visc)
+    σ = LazyField(du.grid, (u, s)) do u, s, i
         @inline
-        δu = δ_stag(g, u, i)
+        δu = δ_stag(u, i)
         smag = -C * abs(δu) * δu
-        s[i] = stress(g, u, visc, i) - smag
+        s[i] - smag
     end
-    myforeachindex(u) do i
+    myforeachindex(du.data) do i
         @inline
-        du[i] = δ_coll(g, s, i)
+        du[i] = δ_coll(σ, i)
     end
 end
 
@@ -791,6 +797,9 @@ compute_spectra(series, setup) =
         gh = Grid(setup.L, setup.nh)
         gH = Grid(setup.L, nH)
         specs = map(fields) do (; u, g, label)
+            cols = getindex.(findall(isnan, series[1].fields.nomodel.u), 2) |> unique |> sort
+            c = filter(i -> i ∉ cols, 1:size(u, 2))
+            u = u[:, c]
             uhat = rfft(u, 1)
             n, nsample = size(u)
             e = sum(u -> abs2(u) / 2 / n^2 / nsample, uhat; dims = 2)
@@ -822,8 +831,11 @@ plot_spectra(specseries, setup) =
                 xlabelvisible = islast,
             )
             tip = specs.dns_fil
+
             # o = (22, 70, 210)[i]
-            o = (22, 38, 80)[i]
+            # o = (22, 38, 80)[i]
+            o = (50, 48, 180)[i]
+
             ax_zoom = ExactClosure.zoombox!(
                 f[i, 1],
                 ax;
@@ -833,23 +845,37 @@ plot_spectra(specseries, setup) =
                 relwidth = 0.45,
                 relheight = 0.45,
             )
+
             styles = (;
                 dns_ref = (; color = :black),
                 dns_ref_fil = (; color = :black, linestyle = :dash),
+                dns_fil = (; color = :black, linestyle = :dash),
+                # dns_ref_fil = (; color = :blue),
+                # dns_fil = (; color = :red),
                 nomodel = (; color = Cycled(1)),
                 class_m = (; color = Cycled(2)),
                 class_p = (; color = Cycled(3)),
                 swapfil = (; color = Cycled(4)),
             )
-            for key in [:dns_ref, :dns_ref_fil, :nomodel, :class_m, :class_p, :swapfil]
+
+            for key in [
+                :dns_ref,
+                :dns_ref_fil,
+                :nomodel,
+                :class_m,
+                :class_p,
+                :swapfil,
+                :dns_fil,
+                # :dns_fil,
+            ]
                 (; k, e, label) = specs[key]
                 # At the end of the spectrum, there are too many points for plotting.
                 # Choose a logarithmically equispaced subset of points instead
-                npoint = 500
+                npoint = 1000
                 ii = round.(Int, logrange(1, length(k), npoint)) |> unique
-                lines!(ax, k[ii], e[ii]; label, styles[key]...)
-                # lines!(ax_zoom, k[ii], e[ii]; styles[key]...)
-                lines!(ax_zoom, k, e; styles[key]...)
+                key != :dns_fil && lines!(ax, k[ii], e[ii]; label, styles[key]...)
+                key != :dns_ref_fil && lines!(ax_zoom, k[ii], e[ii]; styles[key]...)
+                # key != :dns_ref_fil && lines!(ax_zoom, k, e; styles[key]...)
             end
             Label(
                 f[i, 1],
@@ -862,7 +888,10 @@ plot_spectra(specseries, setup) =
                 tellwidth = false,
                 tellheight = false,
             )
-            ylims!(ax, 1e-12, 1e-1)
+            # ylims!(ax, 1e-12, 1e-1)
+            # ylims!(ax, 1e-11, 4e-2)
+            xlims!(ax, 7e-1, 1e4)
+            ylims!(ax, 1e-11, 1e-1)
             ax
         end
         Legend(

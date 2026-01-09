@@ -203,11 +203,12 @@ let
     rng = Xoshiro(1)
     ustart = B.randomfield(rng, g, kpeak, initialenergy, backend)
     uh = copy(ustart)
+    sh = zero(uh)
     t = 0.0
     while t < tstop
         dt = 0.3 * B.cfl(uh, visc) # Propose timestep
         dt = min(dt, tstop - t) # Don't overstep
-        B.timestep!(uh, visc, dt) # Perform timestep
+        B.timestep!(uh, sh, visc, dt) # Perform timestep
         t += dt
     end
     xh = B.points_stag(g)
@@ -230,6 +231,8 @@ end
 
 # DNS-aided LES
 setup = B.getsetup()
+setup |> pairs
+
 B.run_dns_aided_les(setup)
 
 series = B.load_dns_aided_les(setup);

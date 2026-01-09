@@ -10,40 +10,24 @@ end
 
 using CairoMakie
 using ExactClosure
-using ExactClosure.Burgers
+using ExactClosure: Burgers as B
 using FFTW
 using JLD2
 using KernelDensity
 using LinearAlgebra
 using Random
-using Statistics
 # using WGLMakie
 using GLMakie
 
-# outdir = "~/Projects/StructuralErrorPaper" |> expanduser
-outdir = joinpath(@__DIR__, "output", "Burgers") |> mkpath
-plotdir = "$outdir/figures" |> mkpath
-
-setup = let
-    L = 2π
-    nh = 100 * 3^3 * 5
-    nH = 100 .* 3 .^ (1:3)
-    Δ_ratio = 2
-    visc = 5e-4
-    kpeak = 10
-    initialenergy = 2.0
-    tstop = 0.1
-    nsample = 1000
-    (; L, nh, nH, Δ_ratio, visc, kpeak, initialenergy, tstop, nsample)
-end
+setup = B.getsetup()
 setup |> pairs
 
-dnsdata = Burgers.create_dns(setup; cfl_factor = 0.3);
+dnsdata = B.create_dns(setup; cfl_factor = 0.3);
 
-# save_object("$outdir/burgers_dns.jld2", dnsdata)
-# dnsdata = load_object("$outdir/burgers_dns.jld2")
+# save_object("$(setup.outdir)/burgers_dns.jld2", dnsdata)
+# dnsdata = load_object("$(setup.outdir)/burgers_dns.jld2")
 
-fields = Burgers.smagorinsky_fields(setup, dnsdata; lesfiltertype = :gaussian);
+fields = B.smagorinsky_fields(setup, dnsdata; lesfiltertype = :gaussian);
 
 # Estimate θ
 θ_classic = map(fields) do (; Sh, Th, D_Sh, D_Th)
@@ -60,23 +44,23 @@ end
     sqrt(θ2)
 end
 
-u_classic = Burgers.solve_smagorinsky(setup, dnsdata, θ_classic; lesfiltertype = :gaussian)
-u_discret = Burgers.solve_smagorinsky(setup, dnsdata, θ_discret; lesfiltertype = :gaussian)
+u_classic = B.solve_smagorinsky(setup, dnsdata, θ_classic)
+u_discret = B.solve_smagorinsky(setup, dnsdata, θ_discret)
 
-# save_object("$outdir/burgers_classic.jld2", u_classic)
-# save_object("$outdir/burgers_discret.jld2", u_discret)
+# save_object("$(setup.outdir)/burgers_classic.jld2", u_classic)
+# save_object("$(setup.outdir)/burgers_discret.jld2", u_discret)
 
-# u_classic = load_object("$outdir/burgers_classic.jld2")
-# u_discret = load_object("$outdir/burgers_discret.jld2")
+# u_classic = load_object("$(setup.outdir)/burgers_classic.jld2")
+# u_discret = load_object("$(setup.outdir)/burgers_discret.jld2")
 
 let
     j = 1
     fig = Figure(; size = (400, 800))
     for (i, nH) in enumerate(setup.nH)
-        gh = Burgers.Grid(setup.L, setup.nh)
-        gH = Burgers.Grid(setup.L, nH)
-        xh = Burgers.points_stag(gh)
-        xH = Burgers.points_stag(gH)
+        gh = B.Grid(setup.L, setup.nh)
+        gH = B.Grid(setup.L, nH)
+        xh = B.points_stag(gh)
+        xH = B.points_stag(gH)
         ax = Axis(fig[i, 1]; title = "N = $nH", xlabel = "x", ylabel = "u")
         lines!(ax, xh, dnsdata[2][:, j]; label = "DNS")
         # lines!(ax, xH, u_classic[i][:, j]; label = "Smagorinsky")
@@ -161,8 +145,8 @@ end
 
 # Compute relative errors
 relerrs = map(enumerate(setup.nH)) do (i, nH)
-    gh = Burgers.Grid(setup.L, setup.nh)
-    gH = Burgers.Grid(setup.L, nH)
+    gh = B.Grid(setup.L, setup.nh)
+    gH = B.Grid(setup.L, nH)
     @show nH
     U = dnsdata[2]
     comp = div(gh.n, gH.n)
@@ -175,6 +159,7 @@ relerrs = map(enumerate(setup.nH)) do (i, nH)
     (; nH, e)
 end
 
+# Plot coefficients
 let
     colors = Makie.wong_colors()
     fig = Figure(; size = (400, 320))
@@ -212,10 +197,11 @@ let
         nbanks = 1,
         framevisible = false,
     )
-    save("$(plotdir)/burgers_smagorinsky_coefficients.pdf", fig; backend = CairoMakie)
+    save("$(setup.plotdir)/burgers_smagorinsky_coefficients.pdf", fig; backend = CairoMakie)
     fig
 end
 
+# Plot errors
 let
     colors = Makie.wong_colors()
     fig = Figure(; size = (400, 320))
@@ -253,13 +239,13 @@ let
         nbanks = 1,
         framevisible = false,
     )
-    save("$(plotdir)/burgers_smagorinsky_errors.pdf", fig; backend = CairoMakie)
+    save("$(setup.plotdir)/burgers_smagorinsky_errors.pdf", fig; backend = CairoMakie)
     fig
 end
 
 # Write errors to LaTeX table
 let
-    path = joinpath(outdir, "tables") |> mkpath
+    path = joinpath(setup.outdir, "tables") |> mkpath
     file = joinpath(path, "burgers_smagorinsky_error.tex")
     open(file, "w") do io
         tab = "    "
@@ -291,7 +277,7 @@ end
 
 # Write Smagorinsky constants to LaTeX table
 let
-    path = joinpath(outdir, "tables") |> mkpath
+    path = joinpath(setup.outdir, "tables") |> mkpath
     file = joinpath(path, "burgers_smagorinsky_constants.tex")
     open(file, "w") do io
         tab = "    "
@@ -317,8 +303,8 @@ end
 
 # Compute spectra
 specseries = map(enumerate(setup.nH)) do (i, nH)
-    gh = Burgers.Grid(setup.L, setup.nh)
-    gH = Burgers.Grid(setup.L, nH)
+    gh = B.Grid(setup.L, setup.nh)
+    gH = B.Grid(setup.L, nH)
     @show nH
     U = dnsdata[2]
     (; Ubar) = fields[i]
@@ -359,7 +345,7 @@ let
             xticklabelsvisible = islast,
             xlabelvisible = islast,
         )
-        xlims!(ax, 7e-1, 10e3)
+        xlims!(ax, 7e-1, 1e4)
         ylims!(ax, 1e-11, 1e-1)
         tip = specs.classic
         # o = (22, 70, 210)[i]
@@ -376,6 +362,7 @@ let
         styles = (;
             dns_ref = (; color = :black),
             dns_fil = (; color = Cycled(1)),
+            # dns_fil = (; color = :black, linestyle = :dash),
             classic = (; color = Cycled(2)),
             discret = (; color = Cycled(3)),
         )
@@ -415,6 +402,6 @@ let
     )
     linkaxes!(axes...)
     rowgap!(fig.layout, 10)
-    save("$(plotdir)/burgers_smagorinsky_spectrum.pdf", fig; backend = CairoMakie)
+    save("$(setup.plotdir)/burgers_smagorinsky_spectrum.pdf", fig; backend = CairoMakie)
     fig
 end
