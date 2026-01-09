@@ -10,12 +10,8 @@ end
 
 using Adapt
 using CairoMakie
-using CUDA
-using ExactClosure
-using ExactClosure.Burgers
-using FFTW
+using ExactClosure: Burgers as B
 using JLD2
-using KernelDensity
 using LinearAlgebra
 using Random
 # using WGLMakie
@@ -26,85 +22,42 @@ outdir = joinpath(@__DIR__, "output", "Burgers") |> mkpath
 plotdir = "$outdir/figures" |> mkpath
 
 setup = let
-    L = 2π
-    nh = 100 * 3^3 * 5
-    nH = 100 .* 3 .^ (1:3)
-    Δ_scalers = [0, 1, 2, 4, 8, 16, 32, 64]
-    visc = 5e-4
-    kpeak = 10
-    initialenergy = 2.0
-    tstop = 0.1
-    nsample = 10
-    backend = CUDA.functional() ? CUDABackend() : Burgers.AK.KernelAbstractions.CPU()
-    (; L, nh, nH, Δ_scalers, visc, kpeak, initialenergy, tstop, nsample, backend)
+    s = B.getsetup()
+    outdir = joinpath(s.outdir, "delta-study") |> mkpath
+    Δ_ratios = [0, 1, 2, 4, 8, 16, 32, 64]
+    nsample = 5 # 0
+    (; s..., outdir, Δ_ratios, nsample)
 end
 setup |> pairs
 
 # DNS-aided LES
 series =
     map([:tophat, :gaussian]) do lesfiltertype
-        lesfiltertype => map(setup.nH) do nH
-            (; L, nh, visc, kpeak, initialenergy, tstop, nsample, Δ_scalers, backend) =
-                setup
-            gh = Grid(L, nh)
-            gH = Grid(L, nH)
-            widths = Δ_scalers * spacing(gH)
-            nΔ = length(widths)
-            fields =
-                (;
-                    dns_ref = (; g = gh, u = zeros(nh, nsample, nΔ), label = "DNS"),
-                    dns_fil = (;
-                        g = gH,
-                        u = zeros(nH, nsample, nΔ),
-                        label = "Filtered DNS",
-                    ),
-                    nomodel = (; g = gH, u = zeros(nH, nsample, nΔ), label = "No model"),
-                    class_m = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic"),
-                    class_p = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Classic+"),
-                    swapfil = (; g = gH, u = zeros(nH, nsample, nΔ), label = "Swap (ours)"),
-                ) |> adapt(backend)
-            for (i, j) in Iterators.product(1:nsample, eachindex(widths)) |> collect
-                @info "Filter: $(lesfiltertype), N = $nH, sample = $i, Δ/h = $(Δ_scalers[j])"
-                rng = Xoshiro(i)
-                ustart = randomfield(rng, gh, kpeak, initialenergy) |> adapt(backend)
-                sols = Burgers.dns_aided_les(
-                    ustart,
-                    gh,
-                    gH,
-                    visc;
-                    Δ = widths[j],
-                    tstop,
-                    cfl_factor = 0.3,
-                    lesfiltertype,
-                )
-                for key in keys(fields)
-                    copyto!(view(fields[key].u, :, i, j), sols[key])
-                end
-            end
-            (; nH, fields) |> adapt(Burgers.AK.KernelAbstractions.CPU())
-        end
+        outdir = joinpath(setup.outdir, "delta-study-$lesfiltertype") |> mkpath
+        s = (; setup..., outdir)
+        B.run_dns_aided_les(s)
+        dnsaid = B.load_dns_aided_les(s)
+        lesfiltertype => dnsaid
     end |> NamedTuple;
 
-# save_object("$outdir/DeltaSeries.jld2", series)
-# series = load_object("$outdir/DeltaSeries.jld2")
+series.tophat |> size
+series.tophat[1]
+
+# save_object("$(setup.outdir)/delta-series.jld2", series)
+# series = load_object("$(setup.outdir)/delta-series.jld2")
 
 # Compute relative errors
 errseries = map(series) do series
     fields = map([:nomodel, :class_m, :class_p, :swapfil]) do key
-        e = map(series) do (; nH, fields)
+        e = map(series) do (; fields)
             (; u) = fields[key]
-            map(axes(u, 3)) do i
-                ules = selectdim(u, 3, i)
-                uref = selectdim(fields.dns_fil.u, 3, i)
-                norm(ules - uref) / norm(uref)
-            end
+            uref = fields.dns_fil.u
+            norm(u - uref) / norm(uref)
         end
         key => (; e, series[1].fields[key].label)
     end
-    (; nH = getindex.(series, :nH), fields = (; fields...))
+    (; nH = setup.nH, Δ_ratios = setup.Δ_ratios, fields = (; fields...))
 end;
-errseries.tophat.fields |> pairs
-errseries.gaussian.fields |> pairs
 
 let
     for (key, errseries) in zip(keys(errseries), errseries)
@@ -119,7 +72,7 @@ let
                 ylabelvisible = i == 1,
                 # yticklabelsvisible = i == 1,
                 title = "N = $nH",
-                xticks = (eachindex(setup.Δ_scalers), string.(setup.Δ_scalers)),
+                xticks = (eachindex(setup.Δ_ratios), string.(setup.Δ_ratios)),
             )
             ax_log = Axis(
                 fig[2, i];
@@ -128,7 +81,7 @@ let
                 ylabel = "Relative error",
                 ylabelvisible = i == 1,
                 # yticklabelsvisible = i == 1,
-                xticks = (eachindex(setup.Δ_scalers), string.(setup.Δ_scalers)),
+                xticks = (eachindex(setup.Δ_ratios), string.(setup.Δ_ratios)),
             )
             # ylims!(ax_lin, -0.01, 0.12)
             ylims!(ax_log, 1e-16, 1e1)
@@ -142,9 +95,9 @@ let
                     label = "Common filter widths",
                 )
             end
-            widths = setup.Δ_scalers
+            widths = setup.Δ_ratios
             for (j, key) in [:nomodel, :class_m, :class_p, :swapfil] |> enumerate
-                e = errseries.fields[key].e[i]
+                e = errseries.fields[key].e[i, :]
                 color = Cycled(j)
                 label = errseries.fields[key].label
                 key != :nomodel && scatterlines!(ax_lin, e; label, color)
@@ -162,7 +115,7 @@ let
             )
         end
         rowgap!(fig.layout, 10)
-        save("$plotdir/burgers_delta_errors_$(key).pdf", fig; backend = CairoMakie)
+        save("$(setup.plotdir)/burgers_delta_errors_$(key).pdf", fig; backend = CairoMakie)
         display(fig)
         fig
     end

@@ -9,56 +9,22 @@ if false
 end
 
 using CairoMakie
-using CUDA
-using ExactClosure
-using ExactClosure.Burgers
-using FFTW
+using ExactClosure: Burgers as B
 using JLD2
 using KernelDensity
 using LinearAlgebra
 using Random
-using Statistics
 # using WGLMakie
 using GLMakie
 
-setup = let
-    L = 2π
-    nh = 100 * 3^3 * 5
-    nH = 100 .* 3 .^ (1:3)
-    Δ_ratios = [0, 1, 2, 4, 8, 16, 32]
-    visc = 5e-4
-    kpeak = 10
-    initialenergy = 2.0
-    tstop = 0.1
-    nsample = 10
-    lesfiltertype = :gaussian
-    backend = CUDA.functional() ? CUDABackend() : Burgers.AK.KernelAbstractions.CPU()
-    # backend = Burgers.AK.KernelAbstractions.CPU()
-    outdir = joinpath(@__DIR__, "output", "Burgers") |> mkpath
-    plotdir = "$outdir/figures" |> mkpath
-    (;
-        L,
-        nh,
-        nH,
-        Δ_ratios,
-        visc,
-        kpeak,
-        initialenergy,
-        tstop,
-        nsample,
-        lesfiltertype,
-        backend,
-        outdir,
-        plotdir,
-    )
-end
+# Replace default Δ_ratios
+setup = (; B.getsetup()..., Δ_ratios = [0, 1, 2, 4, 8, 16, 32])
 setup |> pairs
 
-# DNS-aided LES
-dns = Burgers.create_dns(setup; cfl_factor = 0.4)
+dns = B.create_dns(setup; cfl_factor = 0.4)
 
-fractions = Burgers.compute_fractions(dns, setup)
+fractions = B.compute_fractions(dns, setup)
 
-Burgers.plot_fractions(fractions, setup)
+B.plot_fractions(fractions, setup)
 
 fractions[:, 3]

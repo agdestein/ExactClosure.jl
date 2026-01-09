@@ -308,7 +308,7 @@ run_dns_aided_les(setup) =
             @info "Δ/h = $Δ_ratio, N = $nH, sample $i of $nsample"
             rng = Xoshiro(i)
             ustart = randomfield(rng, gh, kpeak, initialenergy, backend)
-            @time sols = dns_aided_les(
+            sols = dns_aided_les(
                 ustart,
                 gh,
                 gH,
@@ -1026,7 +1026,7 @@ function plot_dissipation(diss, setup)
 end
 
 function compute_fractions(data, setup)
-    (; L, nh, visc, lesfiltertype) = setup
+    (; L, nh, visc, lesfiltertype, backend) = setup
     map(Iterators.product(setup.nH, setup.Δ_ratios)) do (nH, Δ_ratio)
         gh = Grid(L, nh)
         gH = Grid(L, nH)
@@ -1047,43 +1047,39 @@ function compute_fractions(data, setup)
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
         # Allocate arrays
-        su = zeros(gh.n)
-        fsu = zeros(gH.n)
-        vsu = zeros(gH.n)
-        vu = zeros(gH.n)
-        VU = zeros(gh.n) # Same as vu, but on DNS grid
-        σ_classic = zeros(gH.n)
-        σ_flux = zeros(gH.n)
-        σ_div = zeros(gH.n)
+        uh = Field(gh, backend)
+        fsu = Field(gH, backend)
+        vsu = Field(gH, backend)
+        vu = Field(gH, backend)
+        σ_classic = Field(gH, backend)
+        σ_flux = Field(gH, backend)
+        σ_div = Field(gH, backend)
 
-        f_classic = zeros(gH.n)
-        f_flux = zeros(gH.n)
-        f_div = zeros(gH.n)
+        f_classic = Field(gH, backend)
+        f_flux = Field(gH, backend)
+        f_div = Field(gH, backend)
 
-        frac = stack(eachcol(data[2])) do uh
+        frac = stack(eachcol(data[2])) do col
+            copyto!(uh.data, col)
+
             # DNS stress
-            myforeachindex(su) do i
-                @inline
-                @inbounds su[i] = stress(gh, uh, visc, i)
-            end
+            su = stress(uh, visc)
 
             # Filtered stresses
-            coarsegrain_convolve_coll!(gH, gh, fsu, su, leskernel)
-            coarsegrain_convolve_coll!(gH, gh, vsu, su, doublekernel)
+            materialize!(fsu, lazycoarsegrain(gH, lazyfilter(su, leskernel), false))
+            materialize!(vsu, lazycoarsegrain(gH, lazyfilter(su, doublekernel), false))
 
             # Filtered velocity
-            coarsegrain_convolve_stag!(gH, gh, vu, uh, doublekernel)
-            convolution!(gh, doublekernel, VU, uh)
+            VU = lazyfilter(uh, doublekernel)
+            materialize!(vu, lazycoarsegrain(gH, VU, true))
+            svu = stress(vu, visc)
+            sVU = lazycoarsegrain(gH, stress(VU, visc), false)
 
             # LES stresses
-            comp = div(gh.n, gH.n)
-            a = div(comp, 2)
-            myforeachindex(vu) do i
+            myforeachindex(vu.data) do i
                 @inline
-                @inbounds svu = stress(gH, vu, visc, i)
-                @inbounds sVU = stress(gh, VU, visc, i * comp - a)
-                @inbounds σ_classic[i] = vsu[i] - sVU
-                @inbounds σ_flux[i] = sVU - svu
+                @inbounds σ_classic[i] = vsu[i] - sVU[i]
+                @inbounds σ_flux[i] = sVU[i] - svu[i]
                 @inbounds σ_div[i] = fsu[i] - vsu[i]
 
                 @inbounds σ_total =
@@ -1100,9 +1096,9 @@ function compute_fractions(data, setup)
             # frac_div = norm(σ_div) / norm(σ_classic .+ σ_flux .+ σ_div)
 
             # Fractions
-            frac_classic = sum(f_classic) / gH.n
-            frac_flux = sum(f_flux) / gH.n
-            frac_div = sum(f_div) / gH.n
+            frac_classic = sum(f_classic.data) / gH.n
+            frac_flux = sum(f_flux.data) / gH.n
+            frac_div = sum(f_div.data) / gH.n
 
             vcat(frac_classic, frac_flux, frac_div)
         end
