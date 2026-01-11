@@ -1248,7 +1248,7 @@ dnsaid_project(setup) = let
         t += dt
         itime += 1
 
-        @info "t = $(round(t; sigdigits = 4)) / $(round(twarm; sigdigits = 4))"
+        @info "t = $(round(t; sigdigits = 4)) of $(round(twarm; sigdigits = 4))"
 
         # DNS stuff
         step_forwardeuler!(u_dns, du_dns, poisson_dns, visc, dt)
@@ -1272,7 +1272,7 @@ dnsaid_project(setup) = let
         dt = min(dt, tstop - t)
         t += dt
         itime += 1
-        @show t
+        @info "t = $(round(t; sigdigits = 4)) of $(round(tstop; sigdigits = 4))"
 
         # DNS stuff
         σ_dns = stresstensor(u_dns, visc)
