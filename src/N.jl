@@ -134,15 +134,18 @@ tensordivergence!(du, σ, doadd) = myforeachindex(du[1].data) do ilin
         du1, du2, du3 = du
         I1, I2, I3 = I.I
         du1[I] =
-            doadd * du1[I] - (σ11[I1 + 1, I2, I3] - σ11[I1, I2, I3]) / h -
+            doadd * du1[I] -
+            (σ11[I1 + 1, I2, I3] - σ11[I1, I2, I3]) / h -
             (σ12[I1, I2 + 1, I3] - σ12[I1, I2, I3]) / h -
             (σ31[I1, I2, I3 + 1] - σ31[I1, I2, I3]) / h
         du2[I] =
-            doadd * du2[I] - (σ12[I1 + 1, I2, I3] - σ12[I1, I2, I3]) / h -
+            doadd * du2[I] -
+            (σ12[I1 + 1, I2, I3] - σ12[I1, I2, I3]) / h -
             (σ22[I1, I2 + 1, I3] - σ22[I1, I2, I3]) / h -
             (σ23[I1, I2, I3 + 1] - σ23[I1, I2, I3]) / h
         du3[I] =
-            doadd * du3[I] - (σ31[I1 + 1, I2, I3] - σ31[I1, I2, I3]) / h -
+            doadd * du3[I] -
+            (σ31[I1 + 1, I2, I3] - σ31[I1, I2, I3]) / h -
             (σ23[I1, I2 + 1, I3] - σ23[I1, I2, I3]) / h -
             (σ33[I1, I2, I3 + 1] - σ33[I1, I2, I3]) / h
     end
@@ -684,15 +687,28 @@ lazycoarsegrain(gbar::Grid, u, stag) = let
     end
 end
 
+# getsetup() = (;
+#     D = Val(2),
+#     # l = 2π,
+#     l = 1.0,
+#     # n_dns = 2700, n_les = 300, visc = 5e-4,
+#     n_dns = 800,
+#     n_les = 160,
+#     visc = 5.0e-5,
+#     Δ_ratio = 2,
+#     nσ = 3, # Number of sigmas out in gaussian support
+# )
+
 getsetup() = (;
-    D = Val(2),
-    l = 2π,
+    D = Val(3),
+    # l = 2π,
+    l = 1.0,
     # n_dns = 2700, n_les = 300, visc = 5e-4,
-    n_dns = 300,
+    n_dns = 500,
     n_les = 100,
-    visc = 1.0e-3,
+    visc = 1.0e-4,
     Δ_ratio = 2,
-    nσ = 3, # Number of sigmas out in gaussian support
+    nσ = 2, # Number of sigmas out in gaussian support
 )
 
 dnsaid(setup) = let
@@ -1096,7 +1112,7 @@ if dim(g_les) == 2
     σ_12_c = lazycoarsegrain(g_les, σ_12, corner2D)
     σ_11_c, σ_22_c, σ_12_c
 else
-    (; center, corners3D) = get_positions(g_dns)
+    (; center, corners3D) = get_positions(g_les)
     σ_11, σ_22, σ_33, σ_12, σ_23, σ_31 = σ
     σ_11_c = lazycoarsegrain(g_les, σ_11, center)
     σ_22_c = lazycoarsegrain(g_les, σ_22, center)
@@ -1302,7 +1318,10 @@ end
 
 compute_errors(uaid) = let
     D = dim(uaid.u_nomo[1].grid)
-    map((; uaid.u_nomo, uaid.u_c, uaid.u_cf, uaid.u_cfd_symm, uaid.u_cfd)) do ubar
+    map((; uaid.u_nomo, uaid.u_c, uaid.u_cf,
+         uaid.u_cfd,
+         uaid.u_cfd_symm,
+        )) do ubar
         sum(1:D) do i
             a = ubar[i].data
             b = uaid.u_les[i].data
@@ -1311,7 +1330,7 @@ compute_errors(uaid) = let
     end
 end
 
-plot_spectra(uaid) = let
+plot_spectra(setup, uaid) = let
     g_dns = uaid.u_dns[1].grid
     g_les = uaid.u_les[1].grid
     backend = defaultbackend()
@@ -1321,13 +1340,21 @@ plot_spectra(uaid) = let
     stuff_les = spectral_stuff(g_les, backend)
     spec_dns = spectrum(uaid.u_dns, stuff_dns, poisson_dns)
     spec_les = map(
+        # [
+        #     (:u_les, "Filtered DNS"),
+        #     (:u_nomo, "No-model"),
+        #     (:u_c, "Classic"),
+        #     (:u_cf, "Classic + Flux"),
+        #     (:u_cfd, "Classic + Flux + Div"),
+        #     (:u_cfd_symm, "Classic + Flux + Div (symm)"),
+        # ]
         [
             (:u_les, "Filtered DNS"),
-            (:u_nomo, "No-model"),
-            (:u_c, "Classic"),
-            (:u_cf, "Classic + Flux"),
-            (:u_cfd, "Classic + Flux + Div"),
-            (:u_cfd_symm, "Classic + Flux + Div (symm)"),
+            (:u_nomo, "A"),
+            (:u_c, "B"),
+            (:u_cf, "C"),
+            (:u_cfd, "D"),
+            (:u_cfd_symm, "E"),
         ]
     ) do (key, label)
         s = spectrum(uaid[key], stuff_les, poisson_les)
@@ -1341,7 +1368,8 @@ plot_spectra(uaid) = let
     ekol = 1.0e4 * kkol .^ (-3)
     # lines!(ax, kkol, ekol)
     Legend(fig[1, 2], ax)
-    save("~/toto.png" |> expanduser, fig)
+    plotdir = joinpath(@__DIR__, "..")
+    save("$(plotdir)/dnsaid-project-spectrum.pdf", fig)
     fig
 end
 

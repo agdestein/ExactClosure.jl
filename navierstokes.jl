@@ -156,20 +156,20 @@ end
 
 NS.compute_errors(uaid) |> pairs
 
-NS.plot_spectra(uaid)
+NS.plot_spectra(setup, uaid)
 
 let
     errs = NS.compute_errors(uaid)
     colors = Makie.wong_colors()
     labels = [
-        "No-model",
-        "Classic",
-        "Classic + Flux",
-        "Classic + Flux + Div (symm)",
-        "Classic + Flux + Div",
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
     ]
-    fig = Figure(; size = (500, 400))
-    ax = Axis(fig[1, 1]; yticks = (1:5, labels), xlabel = "Relative error")
+    fig = Figure(; size = (400, 300))
+    ax = Axis(fig[1, 1]; xticks = (1:5, labels), ylabel = "Relative error")
     e = [errs...]
     group = 1:5
     bar_labels = map(e) do e
@@ -185,10 +185,10 @@ let
         # label_position = :center,
         # flip_labels_at=(0.0, 0.0),
         #
-        direction = :x,
+        # direction = :x,
     )
     # ylims!(ax, relerrs[1].e.classic)
-    xlims!(ax, -0.001, 0.015)
+    ylims!(ax, -0.002, 0.055)
     save("ns-dnsaid-errors.pdf", fig; backend = CairoMakie)
     fig
 end
