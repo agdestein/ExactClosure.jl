@@ -121,32 +121,36 @@ tensordivergence!(du, σ, doadd) = myforeachindex(du[1].data) do ilin
     I = linear2cartesian(g, ilin)
     if D == 2
         σ11, σ22, σ12 = σ
+        σ21 = σ12 # Symmetric component
         du1, du2 = du
         I1, I2 = I.I
         du1[I] =
-            doadd * du1[I] - (σ11[I1 + 1, I2] - σ11[I1, I2]) / h -
+            doadd * du1[I] -
+            (σ11[I1 + 1, I2] - σ11[I1, I2]) / h -
             (σ12[I1, I2] - σ12[I1, I2 - 1]) / h
         du2[I] =
-            doadd * du2[I] - (σ12[I1, I2] - σ12[I1 - 1, I2]) / h -
+            doadd * du2[I] -
+            (σ21[I1, I2] - σ21[I1 - 1, I2]) / h -
             (σ22[I1, I2 + 1] - σ22[I1, I2]) / h
     else
         σ11, σ22, σ33, σ12, σ23, σ31 = σ
+        σ21, σ32, σ13 = σ12, σ23, σ31 # Symmetric components
         du1, du2, du3 = du
         I1, I2, I3 = I.I
         du1[I] =
             doadd * du1[I] -
             (σ11[I1 + 1, I2, I3] - σ11[I1, I2, I3]) / h -
-            (σ12[I1, I2 + 1, I3] - σ12[I1, I2, I3]) / h -
-            (σ31[I1, I2, I3 + 1] - σ31[I1, I2, I3]) / h
+            (σ12[I1, I2, I3] - σ12[I1, I2 - 1, I3]) / h -
+            (σ13[I1, I2, I3] - σ13[I1, I2, I3 - 1]) / h
         du2[I] =
             doadd * du2[I] -
-            (σ12[I1 + 1, I2, I3] - σ12[I1, I2, I3]) / h -
+            (σ21[I1, I2, I3] - σ21[I1 - 1, I2, I3]) / h -
             (σ22[I1, I2 + 1, I3] - σ22[I1, I2, I3]) / h -
-            (σ23[I1, I2, I3 + 1] - σ23[I1, I2, I3]) / h
+            (σ23[I1, I2, I3] - σ23[I1, I2, I3 - 1]) / h
         du3[I] =
             doadd * du3[I] -
-            (σ31[I1 + 1, I2, I3] - σ31[I1, I2, I3]) / h -
-            (σ23[I1, I2 + 1, I3] - σ23[I1, I2, I3]) / h -
+            (σ31[I1, I2, I3] - σ31[I1 - 1, I2, I3]) / h -
+            (σ32[I1, I2, I3] - σ32[I1, I2 - 1, I3]) / h -
             (σ33[I1, I2, I3 + 1] - σ33[I1, I2, I3]) / h
     end
 end
@@ -176,17 +180,17 @@ tensordivergence_nonsym!(du, σ, doadd) = myforeachindex(du[1].data) do ilin
         du1[I] =
             doadd * du1[I] -
             (σ11[I1 + 1, I2, I3] - σ11[I1, I2, I3]) / h -
-            (σ12[I1, I2 + 1, I3] - σ12[I1, I2, I3]) / h -
-            (σ13[I1, I2, I3 + 1] - σ13[I1, I2, I3]) / h
+            (σ12[I1, I2, I3] - σ12[I1, I2 - 1, I3]) / h -
+            (σ13[I1, I2, I3] - σ13[I1, I2, I3 - 1]) / h
         du2[I] =
             doadd * du2[I] -
-            (σ21[I1 + 1, I2, I3] - σ21[I1, I2, I3]) / h -
+            (σ21[I1, I2, I3] - σ21[I1 - 1, I2, I3]) / h -
             (σ22[I1, I2 + 1, I3] - σ22[I1, I2, I3]) / h -
-            (σ23[I1, I2, I3 + 1] - σ23[I1, I2, I3]) / h
+            (σ23[I1, I2, I3] - σ23[I1, I2, I3 - 1]) / h
         du3[I] =
             doadd * du3[I] -
-            (σ31[I1 + 1, I2, I3] - σ31[I1, I2, I3]) / h -
-            (σ32[I1, I2 + 1, I3] - σ32[I1, I2, I3]) / h -
+            (σ31[I1, I2, I3] - σ31[I1 - 1, I2, I3]) / h -
+            (σ32[I1, I2, I3] - σ32[I1, I2 - 1, I3]) / h -
             (σ33[I1, I2, I3 + 1] - σ33[I1, I2, I3]) / h
     end
 end
@@ -338,10 +342,12 @@ step_wray3!(u, du, u0, poisson, visc, dt) = let
 end
 
 propose_timestep(u, visc, cfl) = let
-    h = spacing(u[1].grid)
+    g = u[1].grid
+    D = dim(g)
+    h = spacing(g)
     umax = maximum(u -> maximum(abs, u.data), u)
     dt_adv = cfl * h / umax
-    dt_visc = cfl * h^2 / visc
+    dt_visc = cfl * h^2 / visc / 2D
     min(dt_adv, dt_visc)
 end
 
@@ -1313,7 +1319,9 @@ dnsaid_project(setup) = let
     # Filter
     apply_ΔHπ(ubar_coarse, u_dns, poisson_les, GΔH)
 
-    (; u_dns, u_les = ubar_coarse, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
+    (;
+        # u_dns,
+        u_les = ubar_coarse, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
 end
 
 compute_errors(uaid) = let
@@ -1331,14 +1339,14 @@ compute_errors(uaid) = let
 end
 
 plot_spectra(setup, uaid) = let
-    g_dns = uaid.u_dns[1].grid
+    # g_dns = uaid.u_dns[1].grid
     g_les = uaid.u_les[1].grid
     backend = defaultbackend()
-    poisson_dns = poissonsolver(g_dns, backend)
+    # poisson_dns = poissonsolver(g_dns, backend)
     poisson_les = poissonsolver(g_les, backend)
-    stuff_dns = spectral_stuff(g_dns, backend)
+    # stuff_dns = spectral_stuff(g_dns, backend)
     stuff_les = spectral_stuff(g_les, backend)
-    spec_dns = spectrum(uaid.u_dns, stuff_dns, poisson_dns)
+    # spec_dns = spectrum(uaid.u_dns, stuff_dns, poisson_dns)
     spec_les = map(
         # [
         #     (:u_les, "Filtered DNS"),
@@ -1364,12 +1372,17 @@ plot_spectra(setup, uaid) = let
     ax = Axis(fig[1, 1]; xlabel = "k", ylabel = "E(k)", xscale = log10, yscale = log10)
     # lines!(ax, spec_dns.k, spec_dns.s; label = "DNS")
     foreach(s -> lines!(ax, s.k, s.s; s.label), spec_les)
-    kkol = [10^1.5, maximum(spec_dns.k)]
-    ekol = 1.0e4 * kkol .^ (-3)
-    # lines!(ax, kkol, ekol)
+    kkol = [10^1.0, maximum(spec_les[1].k)]
+    ekol =
+        if dim(g_les) == 2
+            1.0e4 * kkol .^ (-3)
+        else
+            1.0e1 * kkol .^ (-5 / 3)
+        end
+    lines!(ax, kkol, ekol)
     Legend(fig[1, 2], ax)
     plotdir = joinpath(@__DIR__, "..")
-    save("$(plotdir)/dnsaid-project-spectrum.pdf", fig)
+    save("$(plotdir)/dnsaid-project-spectrum.pdf", fig; backend = CairoMakie)
     fig
 end
 
