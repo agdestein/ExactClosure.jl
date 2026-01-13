@@ -1394,4 +1394,39 @@ plot_spectra(setup, uaid) = let
     fig
 end
 
+function plot_errors(setup, uaid)
+    errs = compute_errors(uaid)
+    colors = Makie.wong_colors()
+    labels = [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+    ]
+    fig = Figure(; size = (400, 300))
+    ax = Axis(fig[1, 1]; xticks = (1:5, labels), ylabel = "Relative error")
+    e = [errs...]
+    group = 1:5
+    bar_labels = map(e) do e
+        @sprintf "%.3g" e
+    end
+    barplot!(
+        ax,
+        group,
+        e;
+        color = colors[group],
+        # bar_labels = :y,
+        bar_labels,
+        # label_position = :center,
+        # flip_labels_at=(0.0, 0.0),
+        #
+        # direction = :x,
+    )
+    # ylims!(ax, relerrs[1].e.classic)
+    ylims!(ax, -0.002, 0.065)
+    save("ns-dnsaid-errors.pdf", fig; backend = CairoMakie)
+    fig
+end
+
 end
