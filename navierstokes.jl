@@ -7,11 +7,32 @@ using JLD2
 using Random
 using Printf
 
+let
+    n = 50
+    l = 1.0
+    grid = NS.Grid{3}(l, n)
+    backend = NS.defaultbackend()
+    poisson = NS.poissonsolver(grid, backend)
+    profile, args = k -> (k > 0) * k^-3.0, (;)
+    u = NS.randomfield(
+        profile,
+        grid,
+        backend,
+        poisson;
+        rng = Xoshiro(0),
+        totalenergy = 1.0,
+        args...,
+    )
+    p = NS.Field(grid, backend)
+    NS.divergence!(p, u)
+    maximum(abs, p.data)
+end
+
 u = let
-    n = 300
+    n = 100
     visc = 1e-3
-    l = 2π
-    grid = NS.Grid{2}(l, n)
+    l = 1.0
+    grid = NS.Grid{3}(l, n)
     backend = NS.defaultbackend()
     poisson = NS.poissonsolver(grid, backend)
     # u = NS.Field(grid, backend), NS.Field(grid, backend)
@@ -26,32 +47,32 @@ u = let
         totalenergy = 1.0,
         args...,
     )
-    w = NS.Field(grid, backend)
-    du = NS.Field(grid, backend), NS.Field(grid, backend)
-    u0 = NS.Field(grid, backend), NS.Field(grid, backend)
-    wobs = Makie.Observable(Array(w.data))
-    fig = heatmap(wobs)
-    fig |> display
+    # w = NS.Field(grid, backend)
+    du = NS.vectorfield(grid, backend)
+    u0 = NS.vectorfield(grid, backend)
+    # wobs = Makie.Observable(Array(w.data))
+    # fig = heatmap(wobs)
+    # fig |> display
     i = 0
     t = 0.0
-    tmax = 5.0
+    tmax = 0.5
     while t < tmax
         if i > 0 # Skip first step
-            dt = NS.propose_timestep(u, visc, 0.5)
+            dt = NS.propose_timestep(u, visc, 0.4)
             dt = min(dt, tmax - t) # Don't step past tmax
-            # NS.step_forwardeuler!(u, du, poisson, visc, dt)
-            NS.step_wray3!(u, du, u0, poisson, visc, dt)
+            NS.step_forwardeuler!(u, du, poisson, visc, dt)
+            # NS.step_wray3!(u, du, u0, poisson, visc, dt)
             t += dt
         end
         if i % 1 == 0
             @show t
-            NS.vorticity!(w, u)
-            wobs[] = copyto!(wobs[], w.data)
+            # NS.vorticity!(w, u)
+            # wobs[] = copyto!(wobs[], w.data)
             # display(fig)
         end
         i += 1
     end
-    save("toto.png" |> expanduser, fig)
+    # save("toto.png" |> expanduser, fig)
     u
 end
 
@@ -83,12 +104,10 @@ end
 let
     # n = 500
     n = size(u[1], 1)
-    visc = 2e-4
-    l = 2π
-    grid = NS.Grid{2}(l, n)
+    grid = u[1].grid
     h = NS.spacing(grid)
     backend = NS.defaultbackend()
-    comp = 25
+    comp = 5
     H = comp * h
     k_th = NS.tophat(grid, comp)
     k_gauss = NS.gaussian(grid, 2H, 3)
@@ -107,7 +126,6 @@ let
     # end
     profile, args = k -> (k > 0) * k^-3.0, (;)
     poisson = NS.poissonsolver(grid, backend)
-    p = NS.Field(grid, backend)
     # u = NS.randomfield(
     #     profile,
     #     grid,
@@ -118,12 +136,10 @@ let
     #     args...,
     # )
     ubar = NS.vectorfield(grid, backend)
-    @show eltype(ubar[1])
     for (ubar, u) in zip(ubar, u)
         NS.applyfilter!(ubar, u, kernel)
     end
     # @report_opt NS.applyfilter!(ubar[1], u[1], kernel)
-    grid = u[1].grid
     stuff = NS.spectral_stuff(grid, backend)
     spec = NS.spectrum(u, stuff, poisson)
     specbar = NS.spectrum(ubar, stuff, poisson)
@@ -131,10 +147,15 @@ let
     ax = Axis(fig[1, 1]; xlabel = "k", ylabel = "E(k)", xscale = log10, yscale = log10)
     lines!(ax, spec.k, spec.s)
     lines!(ax, specbar.k, specbar.s)
-    kkol = [10^1.5, maximum(spec.k)]
-    ekol = 1e4 * kkol .^ (-3)
+    kkol = [10^1.0, maximum(spec.k)]
+    ekol = 
+        if NS.dim(grid) == 2
+            1e4 * kkol .^ (-3)
+        else
+            1e1 * kkol .^ (-5 / 3)
+        end
     lines!(ax, kkol, ekol)
-    save("~/toto.png" |> expanduser, fig)
+    save("toto.png", fig)
     fig
 end
 
@@ -149,10 +170,12 @@ uaid.u_cfd[1] |> heatmap
 
 @report_opt NS.dnsaid_project(setup)
 
-let
-    ucpu = adapt(Array, uaid)
-    save_object("uaid.jld2", ucpu)
-end
+# let
+#     ucpu = adapt(Array, uaid)
+#     save_object("uaid.jld2", ucpu)
+# end
+
+# uaid = load_object("uaid.jld2") |> adapt(NS.defaultbackend());
 
 NS.compute_errors(uaid) |> pairs
 
@@ -188,7 +211,7 @@ let
         # direction = :x,
     )
     # ylims!(ax, relerrs[1].e.classic)
-    ylims!(ax, -0.002, 0.055)
+    ylims!(ax, -0.002, 0.065)
     save("ns-dnsaid-errors.pdf", fig; backend = CairoMakie)
     fig
 end

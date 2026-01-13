@@ -522,13 +522,13 @@ end
 function create_dns(setup; cfl_factor)
     (; L, nh, kpeak, initialenergy, visc, tstop, nsample, backend) = setup
     g = Grid(L, nh)
-    Ustart = zeros(nh, nsample)
-    U = zeros(nh, nsample)
+    Ustart = KernelAbstractions.zeros(backend, Float64, nh, nsample)
+    U = KernelAbstractions.zeros(backend, Float64, nh, nsample)
+    s = Field(g, backend)
     for i = 1:nsample
         @info "DNS sample $i of $nsample"
         ustart = randomfield(Xoshiro(i), g, kpeak, initialenergy, backend)
         u = copy(ustart)
-        s = zero(u)
         # uold, k1, k2, k3, k4 = zero(u), zero(u), zero(u), zero(u), zero(u)
         t = 0.0
         while t < tstop
@@ -538,10 +538,10 @@ function create_dns(setup; cfl_factor)
             # rk4_timestep!(u, uold, k1, k2, k3, k4, visc, dt)
             t += dt
         end
-        Ustart[:, i] = ustart
-        U[:, i] = u
+        copyto!(view(Ustart, :, i) , ustart.data)
+        copyto!(view(U, :, i), u.data)
     end
-    Ustart, U
+    (Ustart, U) |> adapt(KernelAbstractions.CPU())
 end
 
 function smagorinsky_fields(setup, dnsdata; lesfiltertype)
@@ -710,10 +710,11 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs)
         elseif lesfiltertype == :gaussian
             gaussian_weights(gh, Δ)
         end
-        doublekernel = build_doublekernel(fvmkernel, leskernel)
+        doublekernel = build_doublekernel(fvmkernel, leskernel) |> adapt(backend)
 
         ubar = Field(gH, backend)
         Ubar = zeros(gH.n, size(ustart, 2))
+
 
         u = Field(gh, backend)
 
@@ -725,8 +726,12 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs)
 
         s = similar(ubar)
 
+        ucpu = zeros(size(u.data))
+        ubarcpu = zeros(size(ubar.data))
+
         for j in axes(ustart, 2)
-            copyto!(u.data, view(ustart, :, j))
+            copyto!(ucpu, view(ustart, :, j))
+            copyto!(u.data, ucpu)
             materialize!(ubar,
                  lazycoarsegrain(gH, lazyfilter(u, doublekernel), true))
 
@@ -741,35 +746,21 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs)
 
                 # # Forward Euler step
                 # smagorinsky_rhs!(k1, u, visc, C)
-                # myforeachindex(ubar.data) do i
-                #     @inline
-                #     ubar[i] += dt * k1[i]
-                # end
+                # axpy!(dt, k1.data, ubar.data)
 
                 # RK4 step
                 copyto!(ubar0.data, ubar.data)
                 smagorinsky_rhs!(k1, ubar, visc, C)
-                myforeachindex(ubar.data) do i
-                    @inline
-                    ubar[i] = ubar0[i] + dt / 2 * k1[i]
-                end
+                axpy!(dt / 2, k1.data, ubar.data)
                 smagorinsky_rhs!(k2, ubar, visc, C)
-                myforeachindex(ubar.data) do i
-                    @inline
-                    ubar[i] = ubar0[i] + dt / 2 * k2[i]
-                end
+                axpy!(dt / 2, k2.data, ubar.data)
                 smagorinsky_rhs!(k3, ubar, visc, C)
-                myforeachindex(ubar.data) do i
-                    @inline
-                    ubar[i] = ubar0[i] + dt * k3[i]
-                end
+                axpy!(dt, k3.data, ubar.data)
                 smagorinsky_rhs!(k4, ubar, visc, C)
-                myforeachindex(ubar.data) do i
-                    @inline
-                    ubar[i] = ubar0[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
-                end
+                @. ubar.data = ubar0.data + dt / 6 * (k1.data + 2 * k2.data + 2 * k3.data + k4.data)
             end
-            Ubar[:, j] = ubar
+            copyto!(ubarcpu, ubar.data)
+            copyto!(view(Ubar, :, j), ubarcpu)
         end
 
         Ubar

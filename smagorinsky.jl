@@ -19,7 +19,7 @@ using Random
 # using WGLMakie
 using GLMakie
 
-setup = B.getsetup()
+setup = (; B.getsetup()..., Δ_ratios = [0])
 setup |> pairs
 
 dnsdata = B.create_dns(setup; cfl_factor = 0.3);
@@ -183,7 +183,8 @@ let
         # flip_labels_at=(0.0, 0.0),
     )
     # ylims!(ax, relerrs[1].e.classic)
-    ylims!(ax, -0.015, 0.35)
+    # ylims!(ax, -0.015, 0.35)
+    ylims!(ax, -0.018, 0.49)
     labels = ["Classic", "Discrete (ours)"]
     elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))
     title = "Smagorinsky coefficient"
@@ -197,7 +198,11 @@ let
         nbanks = 1,
         framevisible = false,
     )
-    save("$(setup.plotdir)/burgers_smagorinsky_coefficients.pdf", fig; backend = CairoMakie)
+    @assert length(setup.Δ_ratios) == 1
+    Δ_ratio = setup.Δ_ratios[1]
+    file = "$(setup.plotdir)/burgers_smagorinsky_coefficients_Delta_ratio=$(Δ_ratio).pdf"
+    @info "Saving to $file"
+    save(file, fig; backend = CairoMakie)
     fig
 end
 
@@ -225,7 +230,8 @@ let
         )
     end
     # ylims!(ax, relerrs[1].e.classic)
-    ylims!(ax, -0.004, 0.077)
+    # ylims!(ax, -0.004, 0.077)
+    ylims!(ax, -0.006, 0.177)
     labels = ["Classic", "Discrete (ours)"]
     elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))
     # title = "Smagorinsky coefficient"
@@ -239,7 +245,11 @@ let
         nbanks = 1,
         framevisible = false,
     )
-    save("$(setup.plotdir)/burgers_smagorinsky_errors.pdf", fig; backend = CairoMakie)
+    @assert length(setup.Δ_ratios) == 1
+    Δ_ratio = setup.Δ_ratios[1]
+    file = "$(setup.plotdir)/burgers_smagorinsky_errors_Delta_ratio=$(Δ_ratio).pdf"
+    @info "Saving to $file"
+    save(file, fig; backend = CairoMakie)
     fig
 end
 

@@ -14,6 +14,7 @@ myforeachindex(f, data) = AK.foreachindex(f, data)
 # myforeachindex(f, data) = foreach(f, eachindex(data))
 
 defaultbackend() = CUDA.functional() ? CUDABackend() : KernelAbstractions.CPU()
+# defaultbackend() = KernelAbstractions.CPU()
 
 struct Grid{D}
     l::Float64
@@ -710,9 +711,9 @@ getsetup() = (;
     # l = 2π,
     l = 1.0,
     # n_dns = 2700, n_les = 300, visc = 5e-4,
-    n_dns = 500,
-    n_les = 100,
-    visc = 1.0e-4,
+    n_dns = 250,
+    n_les = 50,
+    visc = 1.0e-3,
     Δ_ratio = 2,
     nσ = 2, # Number of sigmas out in gaussian support
 )
@@ -1234,8 +1235,8 @@ end
 dnsaid_project(setup) = let
     (; l, n_dns, n_les, visc, Δ_ratio, nσ) = setup
     twarm = 0.1
-    tstop = 0.01
-    cfl = 0.15
+    tstop = 0.1
+    cfl = 0.4
     profile, args = k -> (k > 0) * k^-3.0, (; totalenergy = 1.0)
     # profile, args = peak_profile, (; totalenergy = 1.0, kpeak = 5)
     g_dns = Grid(setup.D, l, n_dns)
@@ -1368,7 +1369,7 @@ plot_spectra(setup, uaid) = let
         s = spectrum(uaid[key], stuff_les, poisson_les)
         (; s..., label)
     end
-    fig = Figure()
+    fig = Figure(; size  = (500, 380))
     ax = Axis(fig[1, 1]; xlabel = "k", ylabel = "E(k)", xscale = log10, yscale = log10)
     # lines!(ax, spec_dns.k, spec_dns.s; label = "DNS")
     foreach(s -> lines!(ax, s.k, s.s; s.label), spec_les)
@@ -1379,10 +1380,17 @@ plot_spectra(setup, uaid) = let
         else
             1.0e1 * kkol .^ (-5 / 3)
         end
-    lines!(ax, kkol, ekol)
-    Legend(fig[1, 2], ax)
+    # lines!(ax, kkol, ekol)
+    Legend(
+        fig[0, 1],
+        ax;
+        tellwidth = false,
+        orientation = :horizontal,
+        nbanks = 1,
+        framevisible = false,
+    )
     plotdir = joinpath(@__DIR__, "..")
-    save("$(plotdir)/dnsaid-project-spectrum.pdf", fig; backend = CairoMakie)
+    save("$(plotdir)/ns-dnsaid-spectrum.pdf", fig; backend = CairoMakie)
     fig
 end
 
