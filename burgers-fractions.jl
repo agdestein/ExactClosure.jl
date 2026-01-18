@@ -25,6 +25,9 @@ dns = B.create_dns(setup; cfl_factor = 0.4)
 
 fractions = B.compute_fractions(dns, setup)
 
+# save_object("$(setup.outdir)/burgers-fractions.jld2", fractions)
+# fractions = load_object("$(setup.outdir)/burgers-fractions.jld2")
+
 B.plot_fractions(fractions, setup)
 
 fractions[:, 3]

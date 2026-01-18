@@ -544,8 +544,8 @@ function create_dns(setup; cfl_factor)
     (Ustart, U) |> adapt(KernelAbstractions.CPU())
 end
 
-function smagorinsky_fields(setup, dnsdata; lesfiltertype)
-    (; L, nh, nH, visc, Δ_ratios) = setup
+function smagorinsky_fields(setup, dnsdata)
+    (; L, nh, nH, visc, Δ_ratios, lesfiltertype) = setup
     cpu = KernelAbstractions.CPU()
     map(Iterators.product(Δ_ratios, nH)) do (Δ_ratio, nH)
 
@@ -689,13 +689,14 @@ end
 
 function solve_smagorinsky(setup, dnsdata, smagcoeffs)
     (; L, nh, visc, tstop, Δ_ratios, lesfiltertype, backend) = setup
-    map(Iterators.product(Δ_ratios, eachindex(setup.nH))) do (Δ_ratio, igrid)
+    map(Iterators.product(eachindex(Δ_ratios), eachindex(setup.nH))) do (iΔ, igrid)
+        Δ_ratio = Δ_ratios[iΔ]
         nH = setup.nH[igrid]
         gh = Grid(L, nh)
         gH = Grid(L, nH)
         H = spacing(gH)
         Δ = H * Δ_ratio
-        θ = smagcoeffs[igrid]
+        θ = smagcoeffs[iΔ, igrid]
         C = θ^2 * (Δ^2 + H^2)
 
         ustart, _ = dnsdata
@@ -1017,8 +1018,13 @@ function plot_dissipation(diss, setup)
 end
 
 function compute_fractions(data, setup)
-    (; L, nh, visc, lesfiltertype, backend) = setup
+    (; L, nh, visc, lesfiltertype,
+        backend,
+    ) = setup
+    # backend = KernelAbstractions.CPU()
     map(Iterators.product(setup.nH, setup.Δ_ratios)) do (nH, Δ_ratio)
+        @info "Computing fractions for N = $nH, Δ/h = $Δ_ratio"
+
         gh = Grid(L, nh)
         gH = Grid(L, nH)
         Δ = spacing(gH) * Δ_ratio
@@ -1037,6 +1043,9 @@ function compute_fractions(data, setup)
         # Build double-filter kernel
         doublekernel = build_doublekernel(fvmkernel, leskernel)
 
+        leskernel = leskernel |> adapt(backend)
+        doublekernel = doublekernel |> adapt(backend)
+
         # Allocate arrays
         uh = Field(gh, backend)
         fsu = Field(gH, backend)
@@ -1050,8 +1059,11 @@ function compute_fractions(data, setup)
         f_flux = Field(gH, backend)
         f_div = Field(gH, backend)
 
+        colcpu = zeros(gh.n)
+
         frac = stack(eachcol(data[2])) do col
-            copyto!(uh.data, col)
+            copyto!(colcpu, col)
+            copyto!(uh.data, colcpu)
 
             # DNS stress
             su = stress(uh, visc)
@@ -1101,7 +1113,8 @@ function compute_fractions(data, setup)
 end
 
 function plot_fractions(fractions, setup)
-    fig = Figure(; size = (400, 800))
+    figsize = (400, 800)
+    fig = Figure(; size = figsize)
     (; Δ_ratios, nH, plotdir) = setup
     colors = Makie.wong_colors()
     for (i, nH) in enumerate(nH)
@@ -1141,7 +1154,7 @@ function plot_fractions(fractions, setup)
             # flip_labels_at=(0.0, 0.0),
         )
     end
-    labels = ["Classic", "Flux", "Div"]
+    labels = ["Classic", "Numerical flux", "Divergence"]
     elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))
     title = "Residual flux part"
     Legend(
@@ -1155,7 +1168,410 @@ function plot_fractions(fractions, setup)
         framevisible = false,
     )
     file = "$(plotdir)/burgers_fractions.pdf"
+    @info "Saving fractions plot to $file"
+    save(file, fig; size = figsize, backend = CairoMakie)
+    fig
+end
+
+plot_filters(setup) = let
+    (; L, plotdir) = setup
+    figsize = (800, 420)
+    fig = Figure(; size = figsize)
+    nh = 8000
+    Δ_ratios = [1, 2, 3]
+    for (iratio, Δ_ratio) in enumerate(Δ_ratios)
+        axes = map([1, 2]) do itype
+            gh = Grid(L, nh)
+            h = L / nh
+            H = 150 * h
+            Δ = Δ_ratio * H
+            I = round(Int, H / 2h)
+            f = fill(1 / (2I + 1), 2I + 1)
+            if itype == 1
+                J = round(Int, Δ / h / 2)
+                g = fill(1 / (2J + 1), 2J + 1)
+            elseif itype == 2
+                J, g = gaussian_weights(gh, Δ; nσ = 3.3)
+            end
+            K = I + J
+            d = map((-K):K) do k
+                sum((-J):J) do j
+                    i = k - j
+                    if abs(i) ≤ I
+                        f[I+1+i] * g[J+1+j]
+                    else
+                        zero(eltype(f))
+                    end
+                end
+            end
+            KK = ((-K):K) * h / H
+            ff = [zeros(K - I); f; zeros(K - I)] # Pad with zeros
+            gg = [zeros(K - J); g; zeros(K - J)] # Pad with zeros
+            typelast = itype == 2
+            ax = Axis(
+                fig[itype, iratio];
+                xlabel = "x / h",
+                # xlabel = L"$x / h$",
+                # xlabelsize = 20,
+                ylabel = "Weight",
+                xticksvisible = typelast,
+                xticklabelsvisible = typelast,
+                xlabelvisible = typelast,
+                ylabelvisible = iratio == 1,
+                title = "Δ = $(Δ_ratio)h",
+                # title = L"$\Delta = %$(Δ_ratio) h$",
+                titlevisible = itype == 1,
+                # titlesize = 20,
+            )
+            reach = 1.5 * Δ_ratio
+            # xlims!(ax, -reach, reach)
+            # ylims!(ax, 1e-5, 1)
+            Label(
+                fig[itype, iratio],
+                (itype == 1 ? "Top-hat" : "Gaussian");
+                # fontsize = 26,
+                font = :bold,
+                padding = (10, 10, 10, 10),
+                halign = :left,
+                valign = :top,
+                tellwidth = false,
+                tellheight = false,
+                color = Makie.wong_colors()[1],
+            )
+            # Label(
+            #     fig[itype, iratio],
+            #     "Δ = $(Δ_ratio)h";
+            #     # fontsize = 26,
+            #     font = :bold,
+            #     padding = (10, 10, 10, 10),
+            #     halign = :right,
+            #     valign = :top,
+            #     tellwidth = false,
+            #     tellheight = false,
+            #     color = Makie.wong_colors()[1],
+            # )
+            lines!(ax, KK, gg * H / h; label = "LES filter")
+            lines!(ax, KK, ff * H / h; label = "FVM filter")
+            lines!(ax, KK, d * H / h; label = "LES-FVM filter")
+            # R, w = gaussian_weights(gh, sqrt(Δ^2 + H^2); nσ = 5)
+            # scatter!(ax, (-R:R) * h / H, w; marker = :circle, label = "Haha")
+            (itype, iratio) == (1, 1) && Legend(
+                fig[0, 1:length(Δ_ratios)],
+                ax;
+                tellwidth = false,
+                orientation = :horizontal,
+                framevisible = false,
+            )
+            ax
+        end
+        linkxaxes!(axes...)
+    end
+    rowgap!(fig.layout, 10)
+    save("$(plotdir)/burgers_filters.pdf", fig; size = figsize, backend = CairoMakie)
+    fig
+end
+
+plot_filter_spectra(setup) = let
+    (; L, plotdir) = setup
+    figsize = (800, 420)
+    fig = Figure(; size = figsize)
+    n = 100
+    Δ_ratios = [1, 2, 3]
+    for (iratio, Δ_ratio) in enumerate(Δ_ratios)
+        axes = map([1, 2]) do itype
+            H = L / 200
+            Δ = Δ_ratio * H
+
+            typelast = itype == 2
+            ax = Axis(
+                fig[itype, iratio];
+                xlabel = "k h",
+                # xlabel = L"$k h$",
+                # xlabelsize = 20,
+                ylabel = "Weight",
+                xticksvisible = typelast,
+                xticklabelsvisible = typelast,
+                xlabelvisible = typelast,
+                ylabelvisible = iratio == 1,
+                # yscale = log10,
+                title = "Δ = $(Δ_ratio)h",
+                # title = L"$\Delta = %$(Δ_ratio) h$",
+                # titlesize = 20,
+                titlevisible = itype == 1,
+            )
+
+            colors = Makie.wong_colors()
+            Label(
+                fig[itype, iratio],
+                (itype == 1 ? "Top-hat" : "Gaussian");
+                # (itype == 1 ? "Top-hat LES filter" : "Gaussian LES filter");
+                # fontsize = 26,
+                font = :bold,
+                padding = (10, 10, 10, 10),
+                halign = :right,
+                valign = :top,
+                tellwidth = false,
+                tellheight = false,
+                color = colors[1],
+            )
+
+
+            kmax = div(n, 2)
+            k = 0:kmax
+
+            lesfilter = if itype == 1
+                @. ifelse(k == 0, 1.0, sinpi(k * Δ) / (pi * k * Δ))
+            else
+                @. ifelse(k == 0, 1.0, exp(-π^2 * k^2 * Δ^2 / 6))
+            end
+            fvmfilter = @. ifelse(k == 0, 1.0, sinpi(k * H) / (pi * k * H))
+            lesfvmfilter = lesfilter .* fvmfilter
+
+            lines!(ax, k * H, lesfilter; label = "LES filter")
+            lines!(ax, k * H, fvmfilter; label = "FVM filter")
+            lines!(ax, k * H, lesfvmfilter; label = "LES-FVM filter")
+            vlines!(ax, [H / Δ], linestyle = :dash, color = colors[1];
+                    label = "h / Δ",
+                    # label = L"$h / \Delta$",
+                    )
+            vlines!(ax, [H / sqrt(Δ^2 + H^2)], linestyle = :dash, color = colors[3];
+                    label = "h / √(Δ² + h²)",
+                    # label = L"$h / \sqrt{\Delta^2 + h^2}$",
+                    )
+            # xlims!(ax, -5, 10)
+            # ylims!(ax, 1e-5, 2e0)
+
+            (itype, iratio) == (1, 1) && Legend(
+                fig[0, 1:length(Δ_ratios)],
+                ax;
+                tellwidth = false,
+                orientation = :horizontal,
+                framevisible = false,
+            )
+            ax
+        end
+        # linkxaxes!(axes...)
+    end
+    rowgap!(fig.layout, 10)
+    save("$(plotdir)/burgers_filter_spectra.pdf", fig; size = figsize, backend = CairoMakie)
+    fig
+end
+
+plot_smagorinsky_coefficients(θ_classic, θ_discret, setup) = let
+    (; plotdir, Δ_ratios) = setup
+    colors = Makie.wong_colors()
+    figsize = (400, 620)
+    fig = Figure(; size = figsize)
+    for iΔ in eachindex(Δ_ratios)
+        Δ_ratio = Δ_ratios[iΔ]
+        ax = Axis(
+            fig[iΔ, 1];
+            # xlabel = "N",
+            ylabel = "Smagorinsky coefficient",
+            xticks = (eachindex(setup.nH), map(nH -> "N = $nH", setup.nH)),
+            xticklabelsvisible = iΔ == length(Δ_ratios),
+            title = "Δ = $(Δ_ratio)h",
+        )
+        θ = hcat(θ_classic[iΔ, :], θ_discret[iΔ, :])[:]
+        i = repeat(eachindex(setup.nH), 1, 2)[:]
+        group = repeat((1:2)', length(setup.nH), 1)[:]
+        barplot!(
+            ax,
+            i,
+            θ;
+            color = colors[group],
+            dodge = group,
+            bar_labels = :y,
+            # label_position = :center,
+            # flip_labels_at=(0.0, 0.0),
+        )
+        # ylims!(ax, relerrs[1].e.classic)
+        # ylims!(ax, -0.015, 0.35)
+        iΔ == 1 && ylims!(ax, -0.018, 0.49)
+        iΔ == 2 && ylims!(ax, -0.015, 0.35)
+        labels = ["Classic", "Discretization-informed (ours)"]
+        elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))
+        title = "Smagorinsky coefficient"
+        iΔ == 1 && Legend(
+            fig[0, :],
+            elements,
+            labels;
+            # title;
+            tellwidth = false,
+            orientation = :horizontal,
+            nbanks = 1,
+            framevisible = false,
+        )
+    end
+    file = "$(setup.plotdir)/burgers_smagorinsky_coefficients.pdf"
+    @info "Saving to $file"
+    save(file, fig; size = figsize, backend = CairoMakie)
+    fig
+end
+
+plot_smagorinsky_errors(relerrs, setup) = let
+    (; plotdir, Δ_ratios) = setup
+    colors = Makie.wong_colors()
+    figsize = (400, 620)
+    fig = Figure(; size = figsize)
+    for iΔ in eachindex(Δ_ratios)
+        Δ_ratio = Δ_ratios[iΔ]
+        ax = Axis(
+            fig[iΔ, 1];
+            # xlabel = "N",
+            ylabel = "Relative Error",
+            xticks = (eachindex(setup.nH), map(nH -> "N = $nH", setup.nH)),
+            xticklabelsvisible = iΔ == length(Δ_ratios),
+            title = "Δ = $(Δ_ratio)h",
+        )
+        for iH in eachindex(setup.nH)
+            (; nH, e) = relerrs[iΔ, iH]
+            barplot!(
+                ax,
+                fill(iH, 2),
+                vcat(e...);
+                color = colors[[1, 2]],
+                dodge = [1, 2],
+                bar_labels = :y,
+                # label_position = :center,
+                # flip_labels_at=(0.0, 0.0),
+            )
+        end
+        # ylims!(ax, relerrs[1].e.classic)
+        iΔ == 1 && ylims!(ax, -0.007, 0.177)
+        iΔ == 2 && ylims!(ax, -0.003, 0.07)
+        labels = ["Classic", "Discretization-informed (ours)"]
+        elements = map(i -> PolyElement(; polycolor = colors[i]), eachindex(labels))
+        # title = "Smagorinsky coefficient"
+        iΔ == 1 && Legend(
+            fig[0, :],
+            elements,
+            labels;
+            # title;
+            tellwidth = false,
+            orientation = :horizontal,
+            nbanks = 1,
+            framevisible = false,
+        )
+    end
+    file = "$(setup.plotdir)/burgers_smagorinsky_errors.pdf"
+    @info "Saving to $file"
     save(file, fig; backend = CairoMakie)
+    fig
+end
+
+compute_smagorinsky_spectra(fields, u_classic, u_discret, dnsdata, setup) =
+    map(Iterators.product(eachindex(setup.Δ_ratios), eachindex(setup.nH))) do (iΔ, iH)
+        Δ_ratio = setup.Δ_ratios[iΔ]
+        nH = setup.nH[iH]
+        gh = Grid(setup.L, setup.nh)
+        gH = Grid(setup.L, nH)
+        @show Δ_ratio, nH
+        U = dnsdata[2]
+        (; Ubar) = fields[iΔ, iH]
+        U_classic = u_classic[iΔ, iH]
+        U_discret = u_discret[iΔ, iH]
+        specfields = (;
+            dns_ref = (; u = U, label = "DNS"),
+            dns_fil = (; u = Ubar, label = "Filtered DNS"),
+            classic = (; u = U_classic, label = "Smagorinsky (classic)"),
+            discret = (; u = U_discret, label = "Smagorinsky (discretization-informed, ours)"),
+        )
+        specs = map(specfields) do (; u, label)
+            uhat = rfft(u, 1)
+            n, nsample = size(u)
+            e = sum(u -> abs2(u) / 2 / n^2 / nsample, uhat; dims = 2)
+            e = 2 * e[2:end] # Multiply by 2 since RFFT is half
+            k = 1:div(n, 2)
+            (; k, e, label)
+        end
+        (; Δ_ratio, nH, specs)
+    end
+
+plot_smagorinsky_spectra(specseries, setup) = let
+    (; plotdir, Δ_ratios) = setup
+    figsize = (700, 800)
+    fig = Figure(; size = figsize)
+    f = fig[1, 1] = GridLayout()
+    ticks = 2 .^ (0:2:10)
+    axes = map(Iterators.product(eachindex(setup.Δ_ratios), eachindex(setup.nH))) do (iΔ, iH)
+        (; Δ_ratio, nH, specs) = specseries[iΔ, iH]
+        islastH = iH == length(setup.nH)
+        ax = Axis(
+            f[iH, iΔ];
+            yscale = log10,
+            xscale = log10,
+            xlabel = "Wavenumber",
+            ylabel = "Energy",
+            ylabelvisible = iΔ == 1,
+            yticksvisible = iΔ == 1,
+            yticklabelsvisible = iΔ == 1,
+            xticksvisible = islastH,
+            xticklabelsvisible = islastH,
+            xlabelvisible = islastH,
+            title = "Δ = $(Δ_ratio)h",
+            titlevisible = iH == 1,
+        )
+        xlims!(ax, 7e-1, 1e4)
+        ylims!(ax, 1e-11, 1e-1)
+        tip = specs.classic
+        # o = (22, 70, 210)[iH]
+        o = (72, 200, 600)[iH]
+        ax_zoom = ExactClosure.zoombox!(
+            f[iH, iΔ],
+            ax;
+            point = (tip.k[end-o], tip.e[end-o]),
+            logx = 1.5,
+            logy = 2.8,
+            relwidth = 0.45,
+            relheight = 0.45,
+        )
+        styles = (;
+            dns_ref = (; color = :black),
+            dns_fil = (; color = Cycled(1)),
+            # dns_fil = (; color = :black, linestyle = :dash),
+            classic = (; color = Cycled(2)),
+            discret = (; color = Cycled(3)),
+        )
+        for key in [:dns_ref, :dns_fil, :classic, :discret]
+            (; k, e, label) = specs[key]
+            # At the end of the spectrum, there are too many points for plotting.
+            # Choose a logarithmically equispaced subset of points instead
+            npoint = 300
+            ii = round.(Int, logrange(1, length(k), npoint)) |> unique
+            lines!(ax, k[ii], e[ii]; label, styles[key]...)
+            lines!(ax_zoom, k, e; styles[key]...)
+        end
+        # kkol = logrange(2e0, 2e4, 100)
+        # ekol = map(k -> 1.8e0 * k^-2, kkol)
+        # lines!(ax, kkol, ekol; color = :black, linestyle = :dash)
+        # lines!(ax_zoom, kkol, ekol; color = :black, linestyle = :dash)
+        Label(
+            f[iH, iΔ],
+            "N = $nH";
+            # fontsize = 26,
+            font = :bold,
+            padding = (10, 10, 10, 10),
+            halign = :right,
+            valign = :top,
+            tellwidth = false,
+            tellheight = false,
+        )
+        ax
+    end
+    Legend(
+        fig[0, 1],
+        axes[1];
+        tellwidth = false,
+        orientation = :horizontal,
+        nbanks = 2,
+        framevisible = false,
+    )
+    linkaxes!(axes...)
+    rowgap!(fig.layout, 10)
+    file = "$(setup.plotdir)/burgers_smagorinsky_spectrum.pdf"
+    @info "Saving to $file"
+    save(file, fig; size = figsize, backend = CairoMakie)
     fig
 end
 

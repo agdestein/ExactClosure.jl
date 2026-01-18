@@ -17,10 +17,6 @@ using Random
 # using WGLMakie
 using GLMakie
 
-# outdir = "~/Projects/StructuralErrorPaper" |> expanduser
-outdir = joinpath(@__DIR__, "output", "Burgers") |> mkpath
-plotdir = "$outdir/figures" |> mkpath
-
 setup = let
     s = B.getsetup()
     outdir = joinpath(s.outdir, "delta-study") |> mkpath
@@ -35,7 +31,7 @@ series =
     map([:tophat, :gaussian]) do lesfiltertype
         outdir = joinpath(setup.outdir, "delta-study-$lesfiltertype") |> mkpath
         s = (; setup..., outdir)
-        B.run_dns_aided_les(s)
+        # B.run_dns_aided_les(s)
         dnsaid = B.load_dns_aided_les(s)
         lesfiltertype => dnsaid
     end |> NamedTuple;
@@ -59,18 +55,43 @@ errseries = map(series) do series
     (; nH = setup.nH, Δ_ratios = setup.Δ_ratios, fields = (; fields...))
 end;
 
+errseries.gaussian.fields.class_m.e |> typeof
+errseries.gaussian.fields.class_m.e |> size
+errseries.gaussian.fields.class_m.e[2, 1]
+
+let
+    filtertype = :gaussian
+    key = :nomodel
+    # key = :class_m
+    # key = :class_p
+    # key = :swapfil
+    nH = 2
+    nΔ = 1
+    e = errseries[filtertype].fields[key].e
+    # extrema(e; dims = 2)
+    e[nH, nΔ]
+end
+
+let
+    filtertype = :gaussian
+    nH = 1
+    nΔ = 7
+    errseries[filtertype].fields.nomodel.e[nH, nΔ] |> display
+    errseries[filtertype].fields.class_m.e[nH, nΔ] |> display
+    errseries[filtertype].fields.class_p.e[nH, nΔ] |> display
+    errseries[filtertype].fields.swapfil.e[nH, nΔ] |> display
+end
+
 let
     for (key, errseries) in zip(keys(errseries), errseries)
         fig = Figure(; size = (950, 500))
+        # fig = Figure(; size = (950, 320))
         for (i, nH) in enumerate(errseries.nH)
             ax_lin = Axis(
                 fig[1, i];
-                # yscale = log10,
-                xticklabelsvisible = false,
-                xticksvisible = false,
+                xlabel = "Δ / h",
                 ylabel = "Relative error",
                 ylabelvisible = i == 1,
-                # yticklabelsvisible = i == 1,
                 title = "N = $nH",
                 xticks = (eachindex(setup.Δ_ratios), string.(setup.Δ_ratios)),
             )
@@ -84,8 +105,9 @@ let
                 xticks = (eachindex(setup.Δ_ratios), string.(setup.Δ_ratios)),
             )
             # ylims!(ax_lin, -0.01, 0.12)
-            ylims!(ax_log, 1e-16, 1e1)
+            # ylims!(ax_log, 1e-16, 1e1)
             for ax in (ax_lin, ax_log)
+            # for ax in (ax_lin,)
                 vspan!(
                     ax,
                     1,
@@ -108,7 +130,8 @@ let
             # lines!(ax, ii, map(x -> 3e-2 * 2.0^(-1(x-1)), ii))
             i == 1 && Legend(
                 fig[0, 1:3],
-                ax_log;
+                ax_lin;
+                # ax_log;
                 tellwidth = false,
                 orientation = :horizontal,
                 framevisible = false,
@@ -116,6 +139,8 @@ let
         end
         rowgap!(fig.layout, 10)
         save("$(setup.plotdir)/burgers_delta_errors_$(key).pdf", fig; backend = CairoMakie)
+        # save("burgers_delta_errors_$(key)_withoutnomodel.pdf", fig; backend = CairoMakie)
+        # save("burgers_delta_errors_$(key).pdf", fig; backend = CairoMakie)
         display(fig)
         fig
     end

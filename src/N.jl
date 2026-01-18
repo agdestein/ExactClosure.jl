@@ -9,6 +9,7 @@ using JET
 using KernelAbstractions
 using LinearAlgebra
 using Random
+using Printf
 
 myforeachindex(f, data) = AK.foreachindex(f, data)
 # myforeachindex(f, data) = foreach(f, eachindex(data))
