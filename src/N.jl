@@ -712,9 +712,9 @@ getsetup() = (;
     # l = 2π,
     l = 1.0,
     # n_dns = 2700, n_les = 300, visc = 5e-4,
-    n_dns = 250,
-    n_les = 50,
-    visc = 1.0e-3,
+    # n_dns = 250, n_les = 50,
+    n_dns = 350, n_les = 50,
+    visc = 5.0e-4,
     Δ_ratio = 2,
     nσ = 2, # Number of sigmas out in gaussian support
 )

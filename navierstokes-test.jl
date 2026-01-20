@@ -1,0 +1,160 @@
+using Adapt
+using CairoMakie
+using ExactClosure: NavierStokes as NS
+using GLMakie
+using JET
+using JLD2
+using Random
+using Printf
+
+let
+    n = 50
+    l = 1.0
+    grid = NS.Grid{3}(l, n)
+    backend = NS.defaultbackend()
+    poisson = NS.poissonsolver(grid, backend)
+    profile, args = k -> (k > 0) * k^-3.0, (;)
+    u = NS.randomfield(
+        profile,
+        grid,
+        backend,
+        poisson;
+        rng = Xoshiro(0),
+        totalenergy = 1.0,
+        args...,
+    )
+    p = NS.Field(grid, backend)
+    NS.divergence!(p, u)
+    maximum(abs, p.data)
+end
+
+u = let
+    n = 100
+    visc = 1e-3
+    l = 1.0
+    grid = NS.Grid{3}(l, n)
+    backend = NS.defaultbackend()
+    poisson = NS.poissonsolver(grid, backend)
+    # u = NS.Field(grid, backend), NS.Field(grid, backend)
+    profile, args = k -> (k > 0) * k^-3.0, (;)
+    # profile, args = NS.peak_profile, (; kpeak = 5)
+    u = NS.randomfield(
+        profile,
+        grid,
+        backend,
+        poisson;
+        rng = Xoshiro(0),
+        totalenergy = 1.0,
+        args...,
+    )
+    # w = NS.Field(grid, backend)
+    du = NS.vectorfield(grid, backend)
+    u0 = NS.vectorfield(grid, backend)
+    # wobs = Makie.Observable(Array(w.data))
+    # fig = heatmap(wobs)
+    # fig |> display
+    i = 0
+    t = 0.0
+    tmax = 0.5
+    while t < tmax
+        if i > 0 # Skip first step
+            dt = NS.propose_timestep(u, visc, 0.4)
+            dt = min(dt, tmax - t) # Don't step past tmax
+            NS.step_forwardeuler!(u, du, poisson, visc, dt)
+            # NS.step_wray3!(u, du, u0, poisson, visc, dt)
+            t += dt
+        end
+        if i % 1 == 0
+            @show t
+            # NS.vorticity!(w, u)
+            # wobs[] = copyto!(wobs[], w.data)
+            # display(fig)
+        end
+        i += 1
+    end
+    # save("toto.png" |> expanduser, fig)
+    u
+end
+
+let
+    grid = u[1].grid
+    backend = NS.KernelAbstractions.CPU()
+    v = NS.vectorfield(grid, backend)
+    for i in eachindex(u)
+        ui, vi = u[i], v[i]
+        NS.AK.foreachindex(ui.data) do ilin
+            I = NS.linear2cartesian(grid, ilin)
+            vi[I] = (ui[I] + ui[NS.right(I, i, -1)]) / 2
+        end
+    end
+    poisson = NS.poissonsolver(grid, backend)
+    stuff = NS.spectral_stuff(grid, backend)
+    specu = NS.spectrum(u, stuff, poisson)
+    specv = NS.spectrum(v, stuff, poisson)
+    fig = Figure()
+    ax = Axis(fig[1, 1]; xlabel = "k", ylabel = "E(k)", xscale = log10, yscale = log10)
+    lines!(ax, specu.k, specu.s)
+    lines!(ax, specv.k, specv.s)
+    kkol = [10^1.5, maximum(specu.k)]
+    ekol = 1e3 * kkol .^ (-3)
+    lines!(ax, kkol, ekol)
+    fig
+end
+
+let
+    # n = 500
+    n = size(u[1], 1)
+    grid = u[1].grid
+    h = NS.spacing(grid)
+    backend = NS.defaultbackend()
+    comp = 5
+    H = comp * h
+    k_th = NS.tophat(grid, comp)
+    k_gauss = NS.gaussian(grid, 2H, 3)
+    ki = NS.composekernel(k_th, k_gauss)
+    # ki = NS.tophat(grid, comp)
+    # ki = NS.gaussian(grid, 2H, 3)
+    kernel = NS.kernelproduct(grid, ntuple(Returns(ki), NS.dim(grid))) |> adapt(backend)
+    # let
+    #     fig = Figure()
+    #     ax = Axis(fig[1, 1]; xlabel = "x / h", ylabel = "Weight")
+    #     lines!(ax, k_th[1] ./ h, k_th[2], label = "Tophat")
+    #     lines!(ax, k_gauss[1] ./ h, k_gauss[2], label = "Gaussian")
+    #     lines!(ax, ki[1] ./ h, ki[2], label = "Composition")
+    #     axislegend(ax)
+    #     fig
+    # end
+    profile, args = k -> (k > 0) * k^-3.0, (;)
+    poisson = NS.poissonsolver(grid, backend)
+    # u = NS.randomfield(
+    #     profile,
+    #     grid,
+    #     backend,
+    #     poisson;
+    #     rng = Xoshiro(0),
+    #     totalenergy = 1.0,
+    #     args...,
+    # )
+    ubar = NS.vectorfield(grid, backend)
+    for (ubar, u) in zip(ubar, u)
+        NS.applyfilter!(ubar, u, kernel)
+    end
+    # @report_opt NS.applyfilter!(ubar[1], u[1], kernel)
+    stuff = NS.spectral_stuff(grid, backend)
+    spec = NS.spectrum(u, stuff, poisson)
+    specbar = NS.spectrum(ubar, stuff, poisson)
+    fig = Figure()
+    ax = Axis(fig[1, 1]; xlabel = "k", ylabel = "E(k)", xscale = log10, yscale = log10)
+    lines!(ax, spec.k, spec.s)
+    lines!(ax, specbar.k, specbar.s)
+    kkol = [10^1.0, maximum(spec.k)]
+    ekol = 
+        if NS.dim(grid) == 2
+            1e4 * kkol .^ (-3)
+        else
+            1e1 * kkol .^ (-5 / 3)
+        end
+    lines!(ax, kkol, ekol)
+    save("toto.png", fig)
+    fig
+end
