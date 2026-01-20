@@ -1285,7 +1285,7 @@ plot_filter_spectra(setup) = let
             typelast = itype == 2
             ax = Axis(
                 fig[itype, iratio];
-                xlabel = "k h",
+                xlabel = "h k",
                 # xlabel = L"$k h$",
                 # xlabelsize = 20,
                 ylabel = "Weight",
@@ -1326,10 +1326,14 @@ plot_filter_spectra(setup) = let
             end
             fvmfilter = @. ifelse(k == 0, 1.0, sinpi(k * H) / (pi * k * H))
             lesfvmfilter = lesfilter .* fvmfilter
+            reffilter = @. 1 - pi^2 * k^2 * Δ^2 / 6
+            reffilterdouble = @. 1 - pi^2 * k^2 * (Δ^2 + H^2) / 6
 
-            lines!(ax, k * H, lesfilter; label = "LES filter")
-            lines!(ax, k * H, fvmfilter; label = "FVM filter")
-            lines!(ax, k * H, lesfvmfilter; label = "LES-FVM filter")
+            lines!(ax, H * k, lesfilter; label = "LES filter")
+            lines!(ax, H * k, fvmfilter; label = "FVM filter")
+            lines!(ax, H * k, lesfvmfilter; label = "LES-FVM filter")
+            # lines!(ax, k / 2 * H, reffilter; label = "Taylor")
+            # lines!(ax, k / 2 * H, reffilterdouble; label = "Taylor")
             vlines!(ax, [H / Δ], linestyle = :dash, color = colors[1];
                     label = "h / Δ",
                     # label = L"$h / \Delta$",
