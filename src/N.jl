@@ -719,7 +719,7 @@ getsetup() = (;
     visc = 2.0e-4,
     Δ_ratio = 2,
     nσ = 2, # Number of sigmas out in gaussian support
-    outdir = joinpath(@__DIR__, "..", "output/navierstokes/n_dns=500") |> mkpath, 
+    outdir = joinpath(@__DIR__, "..", "output/navierstokes/n_dns=500") |> mkpath,
 )
 
 dnsaid(setup) = let
@@ -1242,7 +1242,7 @@ dnsaid_project(setup) = let
     tstop = 0.1
     cfl = 0.4
     # profile, args = k -> (k > 0) * k^-3.0, (; totalenergy = 1.0)
-    profile, args = k -> (k > 0) * k^(-5/3), (; totalenergy = 1.0)
+    profile, args = k -> (k > 0) * k^(-5 / 3), (; totalenergy = 1.0)
     # profile, args = peak_profile, (; totalenergy = 1.0, kpeak = 5)
     g_dns = Grid(setup.D, l, n_dns)
     g_les = Grid(setup.D, l, n_les)
@@ -1327,15 +1327,19 @@ dnsaid_project(setup) = let
 
     (;
         # u_dns,
-        u_les = ubar_coarse, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm)
+        u_les = ubar_coarse, u_nomo, u_c, u_cf, u_cfd, u_cfd_symm,
+    )
 end
 
 compute_errors(uaid) = let
     D = dim(uaid.u_nomo[1].grid)
-    map((; uaid.u_nomo, uaid.u_c, uaid.u_cf,
-         uaid.u_cfd,
-         uaid.u_cfd_symm,
-        )) do ubar
+    map(
+        (;
+            uaid.u_nomo, uaid.u_c, uaid.u_cf,
+            uaid.u_cfd,
+            uaid.u_cfd_symm,
+        )
+    ) do ubar
         sum(1:D) do i
             a = ubar[i].data
             b = uaid.u_les[i].data
@@ -1383,18 +1387,20 @@ plot_spectra(setup, uaid) = let
     # figsize = 500, 380
     figsize = 420, 340
     # figsize = 400, 340
-    fig = Figure(; size  = figsize)
-    ax_full = Axis(fig[1, 1];
+    fig = Figure(; size = figsize)
+    ax_full = Axis(
+        fig[1, 1];
         # xlabel = "k", ylabel = "E(k)",
         xlabel = "Wavenumber", ylabel = "Energy",
-        xscale = log10, yscale = log10)
+        xscale = log10, yscale = log10
+    )
 
     tip = spec_les.u_les
     o = 8
     ax_zoom = ExactClosure.zoombox!(
         fig[1, 1],
         ax_full;
-        point = (tip.k[end-o] * fac, tip.s[end-o]),
+        point = (tip.k[end - o] * fac, tip.s[end - o]),
         logx = 1.2,
         logy = 1.9,
         relwidth = 0.45,
@@ -1403,13 +1409,13 @@ plot_spectra(setup, uaid) = let
 
     kkol = [10^1.0, maximum(spec_les[1].k)]
     ekol =
-        if dim(g_les) == 2
-            1.0e4 * kkol .^ (-3)
-        else
-            1.0e1 * kkol .^ (-5 / 3)
-        end
+    if dim(g_les) == 2
+        1.0e4 * kkol .^ (-3)
+    else
+        1.0e1 * kkol .^ (-5 / 3)
+    end
 
-    for s in spec_les 
+    for s in spec_les
         lines!(ax_full, s.k * fac, s.s; s.label, s.args...)
         lines!(ax_zoom, s.k * fac, s.s; s.label, s.args...)
     end
@@ -1456,10 +1462,11 @@ function plot_errors(setup, uaid)
 
     fig = Figure(; size = figsize)
 
-    ax = Axis(fig[1, 1]; xticks = (1:5, labels),
-              xlabel = "RST expression",
-              ylabel = "Relative error",
-              )
+    ax = Axis(
+        fig[1, 1]; xticks = (1:5, labels),
+        xlabel = "RST expression",
+        ylabel = "Relative error",
+    )
 
     barplot!(
         ax,
@@ -1482,7 +1489,7 @@ function plot_errors(setup, uaid)
     plotdir = joinpath(setup.outdir, "plots") |> mkpath
     file = "$(plotdir)/ns-dnsaid-errors.pdf"
     save(file, fig; size = figsize, backend = CairoMakie)
-    fig
+    return fig
 end
 
 end

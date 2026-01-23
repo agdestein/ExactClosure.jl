@@ -30,7 +30,7 @@ end
 "Grid spacing."
 @inline spacing(g::Grid) = g.L / g.n
 
-struct Field{T,A} <: AbstractArray{T, 1}
+struct Field{T, A} <: AbstractArray{T, 1}
     grid::Grid{T}
     data::A
 end
@@ -73,7 +73,7 @@ Base.show(io::IO, ::MIME"text/plain", u::LazyField) =
 
 function Base.similar(u::Field, ::Type{T}, dims::Dims) where {T}
     @assert dims == size(u.data) "Scalar field must have same size as grid."
-    Field(u.grid, similar(u.data, T))
+    return Field(u.grid, similar(u.data, T))
 end
 
 Base.copyto!(v::Field, u::Field) = (copyto!(v.data, u.data); v)
@@ -83,12 +83,12 @@ points_stag(g) = range(0, g.L, g.n + 1)[2:end]
 points_coll(g) = range(0, g.L, g.n + 1)[2:end] .- spacing(g) / 2
 
 # Finite difference
-@inline @inbounds δ_stag(u, i) = (u[i] - u[i-1]) / spacing(u.grid)
-@inline @inbounds δ_coll(p, i) = (p[i+1] - p[i]) / spacing(p.grid)
+@inline @inbounds δ_stag(u, i) = (u[i] - u[i - 1]) / spacing(u.grid)
+@inline @inbounds δ_coll(p, i) = (p[i + 1] - p[i]) / spacing(p.grid)
 
 stress(u, visc) = LazyField(u.grid, (u, visc)) do u, visc, i
     @inline
-    @inbounds ua = u[i-1]
+    @inbounds ua = u[i - 1]
     @inbounds ub = u[i]
     -(ua + ub)^2 / 8 + visc * (ub - ua) / spacing(u.grid)
 end
@@ -135,7 +135,7 @@ function rk4_timestep!(u, uold, k1, k2, k3, k4, visc, dt)
         @inbounds u[i] = uold[i] + dt * k3[i]
     end
     rhs!(k4, u, visc)
-    myforeachindex(u) do i
+    return myforeachindex(u) do i
         @inline
         @inbounds u[i] = uold[i] + dt / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
     end
@@ -146,27 +146,27 @@ end
 function gaussian_weights(g, Δ; nσ = 3)
     σ2 = (Δ / spacing(g))^2 / 12
     R = round(Int, nσ * sqrt(σ2))
-    if Δ < 1e-15
+    if Δ < 1.0e-15
         w = [one(Δ)]
     else
         w = map(r -> exp(-r^2 / 2σ2), (-R):R)
         w ./= sum(w)
     end
-    R, w
+    return R, w
 end
 
 function tophat_weights(g, comp)
     R = div(comp, 2)
     w = fill(one(g.L) / comp, comp)
-    R, w
+    return R, w
 end
 
 lazyfilter(u, kernel) = LazyField(u.grid, (u, kernel)) do u, kernel, i
     @inline
     R, w = kernel
     s = zero(eltype(u))
-    for r = (-R):R
-        @inbounds s += w[r+R+1] * u[i+r]
+    for r in (-R):R
+        @inbounds s += w[r + R + 1] * u[i + r]
     end
     s
 end
@@ -198,17 +198,17 @@ function randomfield(rng, g, kpeak, totalenergy, backend)
     a = irfft(c * g.n, g.n)
     etot = sum(abs2, a) / 2 * spacing(g)
     u = sqrt(totalenergy / etot) * a
-    Field(g, adapt(backend, u))
+    return Field(g, adapt(backend, u))
 end
 
 dissipation(g, u, s) =
     map(1:g.n) do i
-        δ_stag(g, u, i) * s[i]
-        # u[i] * δ_coll(g, s, i)
-    end
+    δ_stag(g, u, i) * s[i]
+    # u[i] * δ_coll(g, s, i)
+end
 
 function dissipation!(g, d, u, s)
-    myforeachindex(d) do i
+    return myforeachindex(d) do i
         @inline
         @inbounds d[i] = s[i] * δ_stag(g, u, i)
     end
@@ -223,13 +223,13 @@ function build_doublekernel(F, G)
         sum((-J):J) do j
             i = k - j
             if abs(i) ≤ I
-                f[I+1+i] * g[J+1+j]
+                f[I + 1 + i] * g[J + 1 + j]
             else
                 zero(eltype(f))
             end
         end
     end
-    K, w_double
+    return K, w_double
 end
 
 getsetup() = let
@@ -238,7 +238,7 @@ getsetup() = let
     nH = 100 .* 3 .^ (1:3)
     # Δ_ratios = [0, 1, 2]
     Δ_ratios = [2]
-    visc = 5e-4
+    visc = 5.0e-4
     kpeak = 10
     initialenergy = 2.0
     tstop = 0.1
@@ -266,74 +266,74 @@ end
 
 run_dns_aided_les(setup) =
     for (nH, Δ_ratio) in Iterators.product(setup.nH, setup.Δ_ratios)
-        (; L, nh, visc, kpeak, initialenergy, tstop, nsample, backend, lesfiltertype, outdir) = setup
-        cpu = KernelAbstractions.CPU()
-        gh = Grid(L, nh)
-        gH = Grid(L, nH)
-        Δ = spacing(gH) * Δ_ratio
-        fields = (;
-            dns_ref = (; g = gh, u = zeros(nh, nsample) |> adapt(backend), label = "DNS"),
-            dns_ref_fil = (;
-                g = gh,
-                u = zeros(nh, nsample) |> adapt(backend),
-                label = "Filtered DNS",
-            ),
-            dns_fil = (;
-                g = gH,
-                u = zeros(nH, nsample) |> adapt(backend),
-                label = "Filtered DNS",
-            ),
-            nomodel = (;
-                g = gH,
-                u = zeros(nH, nsample) |> adapt(backend),
-                label = "No model",
-            ),
-            class_m = (;
-                g = gH,
-                u = zeros(nH, nsample) |> adapt(backend),
-                label = "Classic",
-            ),
-            class_p = (;
-                g = gH,
-                u = zeros(nH, nsample) |> adapt(backend),
-                label = "Classic+Flux",
-            ),
-            swapfil = (;
-                g = gH,
-                u = zeros(nH, nsample) |> adapt(backend),
-                label = "Classic+Flux+Div (ours)",
-            ),
+    (; L, nh, visc, kpeak, initialenergy, tstop, nsample, backend, lesfiltertype, outdir) = setup
+    cpu = KernelAbstractions.CPU()
+    gh = Grid(L, nh)
+    gH = Grid(L, nH)
+    Δ = spacing(gH) * Δ_ratio
+    fields = (;
+        dns_ref = (; g = gh, u = zeros(nh, nsample) |> adapt(backend), label = "DNS"),
+        dns_ref_fil = (;
+            g = gh,
+            u = zeros(nh, nsample) |> adapt(backend),
+            label = "Filtered DNS",
+        ),
+        dns_fil = (;
+            g = gH,
+            u = zeros(nH, nsample) |> adapt(backend),
+            label = "Filtered DNS",
+        ),
+        nomodel = (;
+            g = gH,
+            u = zeros(nH, nsample) |> adapt(backend),
+            label = "No model",
+        ),
+        class_m = (;
+            g = gH,
+            u = zeros(nH, nsample) |> adapt(backend),
+            label = "Classic",
+        ),
+        class_p = (;
+            g = gH,
+            u = zeros(nH, nsample) |> adapt(backend),
+            label = "Classic+Flux",
+        ),
+        swapfil = (;
+            g = gH,
+            u = zeros(nH, nsample) |> adapt(backend),
+            label = "Classic+Flux+Div (ours)",
+        ),
+    )
+    for i in 1:nsample
+        @info "Δ/h = $Δ_ratio, N = $nH, sample $i of $nsample"
+        rng = Xoshiro(i)
+        ustart = randomfield(rng, gh, kpeak, initialenergy, backend)
+        sols = dns_aided_les(
+            ustart,
+            gh,
+            gH,
+            visc;
+            Δ,
+            tstop,
+            cfl_factor = 0.3,
+            lesfiltertype,
         )
-        for i = 1:nsample
-            @info "Δ/h = $Δ_ratio, N = $nH, sample $i of $nsample"
-            rng = Xoshiro(i)
-            ustart = randomfield(rng, gh, kpeak, initialenergy, backend)
-            sols = dns_aided_les(
-                ustart,
-                gh,
-                gH,
-                visc;
-                Δ,
-                tstop,
-                cfl_factor = 0.3,
-                lesfiltertype,
-            )
-            for key in keys(fields)
-                copyto!(view(fields[key].u, :, i), sols[key].data)
-            end
+        for key in keys(fields)
+            copyto!(view(fields[key].u, :, i), sols[key].data)
         end
-        result = (; Δ_ratio, nH, fields = adapt(cpu, fields))
-        file = "$outdir/burgers_Δ_ratio=$(Δ_ratio)_hH=$(nH).jld2"
-        save_object(file, result)
     end
+    result = (; Δ_ratio, nH, fields = adapt(cpu, fields))
+    file = "$outdir/burgers_Δ_ratio=$(Δ_ratio)_hH=$(nH).jld2"
+    save_object(file, result)
+end
 
 load_dns_aided_les(setup) =
     map(Iterators.product(setup.nH, setup.Δ_ratios)) do (nH, Δ_ratio)
-        (; outdir) = setup
-        file = "$outdir/burgers_Δ_ratio=$(Δ_ratio)_hH=$(nH).jld2"
-        @info "Loading $file"
-        load_object(file)
-    end
+    (; outdir) = setup
+    file = "$outdir/burgers_Δ_ratio=$(Δ_ratio)_hH=$(nH).jld2"
+    @info "Loading $file"
+    load_object(file)
+end
 
 stepfromstress!(u, du, s, dt) = let
     myforeachindex(du.data) do i
@@ -374,13 +374,13 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
 
     # Allocate arrays
     u = (;
-        dns_ref     = copy(uh),
+        dns_ref = copy(uh),
         dns_ref_fil = copy(uh),
-        dns_fil     = copy(uH),
-        nomodel     = copy(uH),
-        class_m     = copy(uH), # bar(r(u)) - r(bar(u))
-        class_p     = copy(uH), # bar(r(u)) - rh(bar(u))
-        swapfil     = copy(uH),
+        dns_fil = copy(uH),
+        nomodel = copy(uH),
+        class_m = copy(uH), # bar(r(u)) - r(bar(u))
+        class_p = copy(uH), # bar(r(u)) - rh(bar(u))
+        swapfil = copy(uH),
     )
 
     du = Field(gh, backend)
@@ -403,15 +403,15 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
         # Filtered stresses
         # fsu = lazycoarsegrain(gH, lazyfilter(su, leskernel), false)
         # vsu = lazycoarsegrain(gH, lazyfilter(su, doublekernel), false)
-        materialize!(fsu , lazycoarsegrain(gH, lazyfilter(su, leskernel), false))
-        materialize!(vsu , lazycoarsegrain(gH, lazyfilter(su, doublekernel), false))
+        materialize!(fsu, lazycoarsegrain(gH, lazyfilter(su, leskernel), false))
+        materialize!(vsu, lazycoarsegrain(gH, lazyfilter(su, doublekernel), false))
 
         # Filtered velocity
         VU = lazyfilter(u.dns_ref, doublekernel)
         svu = stress(vu, visc)
         # vu = lazycoarsegrain(gH, VU, true)
         # sVU = lazycoarsegrain(gH, stress(VU, visc), false)
-        materialize!(vu , lazycoarsegrain(gH, VU, true))
+        materialize!(vu, lazycoarsegrain(gH, VU, true))
         materialize!(sVU, lazycoarsegrain(gH, stress(VU, visc), false))
 
         # LES stresses
@@ -441,12 +441,12 @@ function dns_aided_les(ustart, gh, gH, visc; Δ, tstop, cfl_factor, lesfiltertyp
     materialize!(u.dns_ref_fil, lazyfilter(u.dns_ref, doublekernel))
     materialize!(u.dns_fil, lazycoarsegrain(gH, u.dns_ref_fil, true))
 
-    u
+    return u
 end
 
 function compute_dissipation(series, setup)
     (; visc, lesfiltertype) = setup
-    map(series) do (; nH, Δ_ratio, fields)
+    return map(series) do (; nH, Δ_ratio, fields)
         gh = Grid(setup.L, setup.nh)
         gH = Grid(setup.L, nH)
         Δ = spacing(gH) * Δ_ratio
@@ -525,7 +525,7 @@ function create_dns(setup; cfl_factor)
     Ustart = KernelAbstractions.zeros(backend, Float64, nh, nsample)
     U = KernelAbstractions.zeros(backend, Float64, nh, nsample)
     s = Field(g, backend)
-    for i = 1:nsample
+    for i in 1:nsample
         @info "DNS sample $i of $nsample"
         ustart = randomfield(Xoshiro(i), g, kpeak, initialenergy, backend)
         u = copy(ustart)
@@ -538,16 +538,16 @@ function create_dns(setup; cfl_factor)
             # rk4_timestep!(u, uold, k1, k2, k3, k4, visc, dt)
             t += dt
         end
-        copyto!(view(Ustart, :, i) , ustart.data)
+        copyto!(view(Ustart, :, i), ustart.data)
         copyto!(view(U, :, i), u.data)
     end
-    (Ustart, U) |> adapt(KernelAbstractions.CPU())
+    return (Ustart, U) |> adapt(KernelAbstractions.CPU())
 end
 
 function smagorinsky_fields(setup, dnsdata)
     (; L, nh, nH, visc, Δ_ratios, lesfiltertype) = setup
     cpu = KernelAbstractions.CPU()
-    map(Iterators.product(Δ_ratios, nH)) do (Δ_ratio, nH)
+    return map(Iterators.product(Δ_ratios, nH)) do (Δ_ratio, nH)
 
         gh = Grid(L, nh)
         gH = Grid(L, nH)
@@ -650,8 +650,8 @@ function smagorinsky_fields(setup, dnsdata)
             myforeachindex(tH.data) do i
                 @inline
                 # Coarse-grid stress (on the fine grid)
-                uleft = uh_double[i-a-1]
-                uright = uh_double[i+a]
+                uleft = uh_double[i - a - 1]
+                uright = uh_double[i + a]
                 σh_double2i =
                     -(uleft + uright)^2 / 8 + visc * (uright - uleft) / spacing(gH)
                 tH[i] = σh_double1[i] - σh_double2i
@@ -661,8 +661,8 @@ function smagorinsky_fields(setup, dnsdata)
             myforeachindex(sH.data) do i
                 @inline
                 # Coarse-grid derivative (on fine grid)
-                uleft = uh_double[i-a-1]
-                uright = uh_double[i+a]
+                uleft = uh_double[i - a - 1]
+                uright = uh_double[i + a]
                 δu = (uright - uleft) / spacing(gH)
                 sH[i] = -(Δ^2 + H^2) * abs(δu) * δu
             end
@@ -670,8 +670,8 @@ function smagorinsky_fields(setup, dnsdata)
             # Compute dissipation coefficients
             myforeachindex(D_sH.data) do i
                 @inline
-                uleft = uh_double[i-a-1]
-                uright = uh_double[i+a]
+                uleft = uh_double[i - a - 1]
+                uright = uh_double[i + a]
                 δu = (uright - uleft) / spacing(gH)
                 D_sH[i] = sH[i] * δu # Smag
                 D_tH[i] = tH[i] * δu # True
@@ -689,7 +689,7 @@ end
 
 function solve_smagorinsky(setup, dnsdata, smagcoeffs)
     (; L, nh, visc, tstop, Δ_ratios, lesfiltertype, backend) = setup
-    map(Iterators.product(eachindex(Δ_ratios), eachindex(setup.nH))) do (iΔ, igrid)
+    return map(Iterators.product(eachindex(Δ_ratios), eachindex(setup.nH))) do (iΔ, igrid)
         Δ_ratio = Δ_ratios[iΔ]
         nH = setup.nH[igrid]
         gh = Grid(L, nh)
@@ -733,8 +733,10 @@ function solve_smagorinsky(setup, dnsdata, smagcoeffs)
         for j in axes(ustart, 2)
             copyto!(ucpu, view(ustart, :, j))
             copyto!(u.data, ucpu)
-            materialize!(ubar,
-                 lazycoarsegrain(gH, lazyfilter(u, doublekernel), true))
+            materialize!(
+                ubar,
+                lazycoarsegrain(gH, lazyfilter(u, doublekernel), true)
+            )
 
             @info "Δ/H = $(Δ_ratio), nH = $nH, sample $j of $(size(ustart, 2))"
 
@@ -776,7 +778,7 @@ function smagorinsky_rhs!(du, u, visc, C)
         smag = -C * abs(δu) * δu
         s[i] - smag
     end
-    myforeachindex(du.data) do i
+    return myforeachindex(du.data) do i
         @inline
         du[i] = δ_coll(σ, i)
     end
@@ -785,72 +787,72 @@ end
 # Compute spectra
 compute_spectra(series, setup) =
     map(series) do (; Δ_ratio, nH, fields)
-        @show Δ_ratio, nH
-        gh = Grid(setup.L, setup.nh)
-        gH = Grid(setup.L, nH)
-        specs = map(fields) do (; u, g, label)
-            cols = getindex.(findall(isnan, series[1].fields.nomodel.u), 2) |> unique |> sort
-            c = filter(i -> i ∉ cols, 1:size(u, 2))
-            u = u[:, c]
-            uhat = rfft(u, 1)
-            n, nsample = size(u)
-            e = sum(u -> abs2(u) / 2 / n^2 / nsample, uhat; dims = 2)
-            e = e[2:end]
-            k = 1:div(n, 2)
-            (; k, e, label)
-        end
-        (; nH, Δ_ratio, specs)
+    @show Δ_ratio, nH
+    gh = Grid(setup.L, setup.nh)
+    gH = Grid(setup.L, nH)
+    specs = map(fields) do (; u, g, label)
+        cols = getindex.(findall(isnan, series[1].fields.nomodel.u), 2) |> unique |> sort
+        c = filter(i -> i ∉ cols, 1:size(u, 2))
+        u = u[:, c]
+        uhat = rfft(u, 1)
+        n, nsample = size(u)
+        e = sum(u -> abs2(u) / 2 / n^2 / nsample, uhat; dims = 2)
+        e = e[2:end]
+        k = 1:div(n, 2)
+        (; k, e, label)
     end
+    (; nH, Δ_ratio, specs)
+end
 
 # Plot spectra
 plot_spectra(specseries, setup) =
     for (iΔ, Δ_ratio) in enumerate(setup.Δ_ratios)
-        (; plotdir) = setup
-        fig = Figure(; size = (400, 800))
-        f = fig[1, 1] = GridLayout()
-        ticks = 2 .^ (0:2:10)
-        axes = map(specseries[:, iΔ] |> enumerate) do (i, specseries)
-            (; nH, specs) = specseries
-            islast = i == 3
-            ax = Axis(
-                f[i, 1];
-                yscale = log10,
-                xscale = log10,
-                xlabel = "Wavenumber",
-                ylabel = "Energy",
-                xticksvisible = islast,
-                xticklabelsvisible = islast,
-                xlabelvisible = islast,
-            )
-            tip = specs.dns_fil
+    (; plotdir) = setup
+    fig = Figure(; size = (400, 800))
+    f = fig[1, 1] = GridLayout()
+    ticks = 2 .^ (0:2:10)
+    axes = map(specseries[:, iΔ] |> enumerate) do (i, specseries)
+        (; nH, specs) = specseries
+        islast = i == 3
+        ax = Axis(
+            f[i, 1];
+            yscale = log10,
+            xscale = log10,
+            xlabel = "Wavenumber",
+            ylabel = "Energy",
+            xticksvisible = islast,
+            xticklabelsvisible = islast,
+            xlabelvisible = islast,
+        )
+        tip = specs.dns_fil
 
-            # o = (22, 70, 210)[i]
-            # o = (22, 38, 80)[i]
-            o = (50, 48, 180)[i]
+        # o = (22, 70, 210)[i]
+        # o = (22, 38, 80)[i]
+        o = (50, 48, 180)[i]
 
-            ax_zoom = ExactClosure.zoombox!(
-                f[i, 1],
-                ax;
-                point = (tip.k[end-o], tip.e[end-o]),
-                logx = 1.3,
-                logy = 3.0,
-                relwidth = 0.45,
-                relheight = 0.45,
-            )
+        ax_zoom = ExactClosure.zoombox!(
+            f[i, 1],
+            ax;
+            point = (tip.k[end - o], tip.e[end - o]),
+            logx = 1.3,
+            logy = 3.0,
+            relwidth = 0.45,
+            relheight = 0.45,
+        )
 
-            styles = (;
-                dns_ref = (; color = :black),
-                dns_ref_fil = (; color = :black, linestyle = :dash),
-                dns_fil = (; color = :black, linestyle = :dash),
-                # dns_ref_fil = (; color = :blue),
-                # dns_fil = (; color = :red),
-                nomodel = (; color = Cycled(1)),
-                class_m = (; color = Cycled(2)),
-                class_p = (; color = Cycled(3)),
-                swapfil = (; color = Cycled(4)),
-            )
+        styles = (;
+            dns_ref = (; color = :black),
+            dns_ref_fil = (; color = :black, linestyle = :dash),
+            dns_fil = (; color = :black, linestyle = :dash),
+            # dns_ref_fil = (; color = :blue),
+            # dns_fil = (; color = :red),
+            nomodel = (; color = Cycled(1)),
+            class_m = (; color = Cycled(2)),
+            class_p = (; color = Cycled(3)),
+            swapfil = (; color = Cycled(4)),
+        )
 
-            for key in [
+        for key in [
                 :dns_ref,
                 :dns_ref_fil,
                 :nomodel,
@@ -860,58 +862,58 @@ plot_spectra(specseries, setup) =
                 :dns_fil,
                 # :dns_fil,
             ]
-                (; k, e, label) = specs[key]
-                # At the end of the spectrum, there are too many points for plotting.
-                # Choose a logarithmically equispaced subset of points instead
-                npoint = 1000
-                ii = round.(Int, logrange(1, length(k), npoint)) |> unique
-                key != :dns_fil && lines!(ax, k[ii], e[ii]; label, styles[key]...)
-                key != :dns_ref_fil && lines!(ax_zoom, k[ii], e[ii]; styles[key]...)
-                # key != :dns_ref_fil && lines!(ax_zoom, k, e; styles[key]...)
-            end
-            Label(
-                f[i, 1],
-                "N = $nH";
-                # fontsize = 26,
-                font = :bold,
-                padding = (10, 10, 10, 10),
-                halign = :right,
-                valign = :top,
-                tellwidth = false,
-                tellheight = false,
-            )
-            # ylims!(ax, 1e-12, 1e-1)
-            # ylims!(ax, 1e-11, 4e-2)
-            xlims!(ax, 7e-1, 1e4)
-            ylims!(ax, 1e-11, 1e-1)
-            ax
+            (; k, e, label) = specs[key]
+            # At the end of the spectrum, there are too many points for plotting.
+            # Choose a logarithmically equispaced subset of points instead
+            npoint = 1000
+            ii = round.(Int, logrange(1, length(k), npoint)) |> unique
+            key != :dns_fil && lines!(ax, k[ii], e[ii]; label, styles[key]...)
+            key != :dns_ref_fil && lines!(ax_zoom, k[ii], e[ii]; styles[key]...)
+            # key != :dns_ref_fil && lines!(ax_zoom, k, e; styles[key]...)
         end
-        Legend(
-            fig[0, 1],
-            axes[1];
+        Label(
+            f[i, 1],
+            "N = $nH";
+            # fontsize = 26,
+            font = :bold,
+            padding = (10, 10, 10, 10),
+            halign = :right,
+            valign = :top,
             tellwidth = false,
-            orientation = :horizontal,
-            nbanks = 3,
-            framevisible = false,
+            tellheight = false,
         )
-        linkaxes!(axes...)
-        rowgap!(fig.layout, 10)
-        save(
-            "$(plotdir)/burgers_spectrum_Delta_ratio=$Δ_ratio.pdf",
-            fig;
-            backend = CairoMakie,
-        )
-        display(fig)
+        # ylims!(ax, 1e-12, 1e-1)
+        # ylims!(ax, 1e-11, 4e-2)
+        xlims!(ax, 7.0e-1, 1.0e4)
+        ylims!(ax, 1.0e-11, 1.0e-1)
+        ax
     end
+    Legend(
+        fig[0, 1],
+        axes[1];
+        tellwidth = false,
+        orientation = :horizontal,
+        nbanks = 3,
+        framevisible = false,
+    )
+    linkaxes!(axes...)
+    rowgap!(fig.layout, 10)
+    save(
+        "$(plotdir)/burgers_spectrum_Delta_ratio=$Δ_ratio.pdf",
+        fig;
+        backend = CairoMakie,
+    )
+    display(fig)
+end
 
 compute_errors(series) =
     map([:nomodel, :class_m, :class_p, :swapfil]) do key
-        e = map(series) do (; nH, fields)
-            (; u) = fields[key]
-            norm(u - fields.dns_fil.u) / norm(fields.dns_fil.u)
-        end
-        key => (; e, series[1].fields[key].label)
-    end |> NamedTuple
+    e = map(series) do (; nH, fields)
+        (; u) = fields[key]
+        norm(u - fields.dns_fil.u) / norm(fields.dns_fil.u)
+    end
+    key => (; e, series[1].fields[key].label)
+end |> NamedTuple
 
 # Write errors to LaTeX table
 function write_error_table(errseries, setup)
@@ -945,7 +947,7 @@ function write_error_table(errseries, setup)
         println(io, "% vim: conceallevel=0 textwidth=0")
     end
     open(readlines, file) .|> println
-    nothing
+    return nothing
 end
 
 # Plot dissipation coefficient density
@@ -974,14 +976,14 @@ function plot_dissipation(diss, setup)
             yscale = log10,
         )
         xlims!(ax, -0.3 * a, 0.5 * a)
-        ylims!(ax, 1e-4, 4e-1)
+        ylims!(ax, 1.0e-4, 4.0e-1)
         for (j, model) in enumerate(models)
             d = diss[model.sym] / (Δ^2 + Δx^2)
             s = median(d)
             if model.sym == :nomodel
                 lines!(
                     ax,
-                    [Point2(s, 1e-5), Point2(s, 1e0)];
+                    [Point2(s, 1.0e-5), Point2(s, 1.0e0)];
                     color = Cycled(j),
                     model.label,
                 )
@@ -1014,15 +1016,16 @@ function plot_dissipation(diss, setup)
     file = "$(plotdir)/burgers_dissipation.pdf"
     @info "Saving dissipation plot to $file"
     save(file, fig; backend = CairoMakie)
-    fig
+    return fig
 end
 
 function compute_fractions(data, setup)
-    (; L, nh, visc, lesfiltertype,
+    (;
+        L, nh, visc, lesfiltertype,
         backend,
     ) = setup
     # backend = KernelAbstractions.CPU()
-    map(Iterators.product(setup.nH, setup.Δ_ratios)) do (nH, Δ_ratio)
+    return map(Iterators.product(setup.nH, setup.Δ_ratios)) do (nH, Δ_ratio)
         @info "Computing fractions for N = $nH, Δ/h = $Δ_ratio"
 
         gh = Grid(L, nh)
@@ -1170,7 +1173,7 @@ function plot_fractions(fractions, setup)
     file = "$(plotdir)/burgers_fractions.pdf"
     @info "Saving fractions plot to $file"
     save(file, fig; size = figsize, backend = CairoMakie)
-    fig
+    return fig
 end
 
 plot_filters(setup) = let
@@ -1198,7 +1201,7 @@ plot_filters(setup) = let
                 sum((-J):J) do j
                     i = k - j
                     if abs(i) ≤ I
-                        f[I+1+i] * g[J+1+j]
+                        f[I + 1 + i] * g[J + 1 + j]
                     else
                         zero(eltype(f))
                     end
@@ -1334,14 +1337,16 @@ plot_filter_spectra(setup) = let
             lines!(ax, H * k, lesfvmfilter; label = "LES-FVM filter")
             # lines!(ax, k / 2 * H, reffilter; label = "Taylor")
             # lines!(ax, k / 2 * H, reffilterdouble; label = "Taylor")
-            vlines!(ax, [H / Δ], linestyle = :dash, color = colors[1];
-                    label = "h / Δ",
-                    # label = L"$h / \Delta$",
-                    )
-            vlines!(ax, [H / sqrt(Δ^2 + H^2)], linestyle = :dash, color = colors[3];
-                    label = "h / √(Δ² + h²)",
-                    # label = L"$h / \sqrt{\Delta^2 + h^2}$",
-                    )
+            vlines!(
+                ax, [H / Δ], linestyle = :dash, color = colors[1];
+                label = "h / Δ",
+                # label = L"$h / \Delta$",
+            )
+            vlines!(
+                ax, [H / sqrt(Δ^2 + H^2)], linestyle = :dash, color = colors[3];
+                label = "h / √(Δ² + h²)",
+                # label = L"$h / \sqrt{\Delta^2 + h^2}$",
+            )
             # xlims!(ax, -5, 10)
             # ylims!(ax, 1e-5, 2e0)
 
@@ -1466,31 +1471,31 @@ end
 
 compute_smagorinsky_spectra(fields, u_classic, u_discret, dnsdata, setup) =
     map(Iterators.product(eachindex(setup.Δ_ratios), eachindex(setup.nH))) do (iΔ, iH)
-        Δ_ratio = setup.Δ_ratios[iΔ]
-        nH = setup.nH[iH]
-        gh = Grid(setup.L, setup.nh)
-        gH = Grid(setup.L, nH)
-        @show Δ_ratio, nH
-        U = dnsdata[2]
-        (; Ubar) = fields[iΔ, iH]
-        U_classic = u_classic[iΔ, iH]
-        U_discret = u_discret[iΔ, iH]
-        specfields = (;
-            dns_ref = (; u = U, label = "DNS"),
-            dns_fil = (; u = Ubar, label = "Filtered DNS"),
-            classic = (; u = U_classic, label = "Smagorinsky (classic)"),
-            discret = (; u = U_discret, label = "Smagorinsky (discretization-informed, ours)"),
-        )
-        specs = map(specfields) do (; u, label)
-            uhat = rfft(u, 1)
-            n, nsample = size(u)
-            e = sum(u -> abs2(u) / 2 / n^2 / nsample, uhat; dims = 2)
-            e = 2 * e[2:end] # Multiply by 2 since RFFT is half
-            k = 1:div(n, 2)
-            (; k, e, label)
-        end
-        (; Δ_ratio, nH, specs)
+    Δ_ratio = setup.Δ_ratios[iΔ]
+    nH = setup.nH[iH]
+    gh = Grid(setup.L, setup.nh)
+    gH = Grid(setup.L, nH)
+    @show Δ_ratio, nH
+    U = dnsdata[2]
+    (; Ubar) = fields[iΔ, iH]
+    U_classic = u_classic[iΔ, iH]
+    U_discret = u_discret[iΔ, iH]
+    specfields = (;
+        dns_ref = (; u = U, label = "DNS"),
+        dns_fil = (; u = Ubar, label = "Filtered DNS"),
+        classic = (; u = U_classic, label = "Smagorinsky (classic)"),
+        discret = (; u = U_discret, label = "Smagorinsky (discretization-informed, ours)"),
+    )
+    specs = map(specfields) do (; u, label)
+        uhat = rfft(u, 1)
+        n, nsample = size(u)
+        e = sum(u -> abs2(u) / 2 / n^2 / nsample, uhat; dims = 2)
+        e = 2 * e[2:end] # Multiply by 2 since RFFT is half
+        k = 1:div(n, 2)
+        (; k, e, label)
     end
+    (; Δ_ratio, nH, specs)
+end
 
 plot_smagorinsky_spectra(specseries, setup) = let
     (; plotdir, Δ_ratios) = setup
@@ -1516,15 +1521,15 @@ plot_smagorinsky_spectra(specseries, setup) = let
             title = "Δ = $(Δ_ratio)h",
             titlevisible = iH == 1,
         )
-        xlims!(ax, 7e-1, 1e4)
-        ylims!(ax, 1e-11, 1e-1)
+        xlims!(ax, 7.0e-1, 1.0e4)
+        ylims!(ax, 1.0e-11, 1.0e-1)
         tip = specs.classic
         # o = (22, 70, 210)[iH]
         o = (72, 200, 600)[iH]
         ax_zoom = ExactClosure.zoombox!(
             f[iH, iΔ],
             ax;
-            point = (tip.k[end-o], tip.e[end-o]),
+            point = (tip.k[end - o], tip.e[end - o]),
             logx = 1.5,
             logy = 2.8,
             relwidth = 0.45,
