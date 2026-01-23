@@ -1,5 +1,7 @@
 module NavierStokes
 
+using ..ExactClosure
+
 using AcceleratedKernels: AcceleratedKernels as AK
 using Adapt
 using CairoMakie
@@ -713,10 +715,11 @@ getsetup() = (;
     l = 1.0,
     # n_dns = 2700, n_les = 300, visc = 5e-4,
     # n_dns = 250, n_les = 50,
-    n_dns = 350, n_les = 50,
-    visc = 5.0e-4,
+    n_dns = 500, n_les = 100,
+    visc = 2.0e-4,
     Δ_ratio = 2,
     nσ = 2, # Number of sigmas out in gaussian support
+    outdir = joinpath(@__DIR__, "..", "output/navierstokes/n_dns=500") |> mkpath, 
 )
 
 dnsaid(setup) = let
@@ -1238,7 +1241,8 @@ dnsaid_project(setup) = let
     twarm = 0.1
     tstop = 0.1
     cfl = 0.4
-    profile, args = k -> (k > 0) * k^-3.0, (; totalenergy = 1.0)
+    # profile, args = k -> (k > 0) * k^-3.0, (; totalenergy = 1.0)
+    profile, args = k -> (k > 0) * k^(-5/3), (; totalenergy = 1.0)
     # profile, args = peak_profile, (; totalenergy = 1.0, kpeak = 5)
     g_dns = Grid(setup.D, l, n_dns)
     g_les = Grid(setup.D, l, n_les)
@@ -1341,6 +1345,7 @@ compute_errors(uaid) = let
 end
 
 plot_spectra(setup, uaid) = let
+    (; outdir) = setup
     # g_dns = uaid.u_dns[1].grid
     g_les = uaid.u_les[1].grid
     backend = defaultbackend()
@@ -1359,21 +1364,43 @@ plot_spectra(setup, uaid) = let
         #     (:u_cfd_symm, "Classic + Flux + Div (symm)"),
         # ]
         [
-            (:u_les, "Filtered DNS"),
             (:u_nomo, "A"),
             (:u_c, "B"),
             (:u_cf, "C"),
             (:u_cfd, "D"),
             (:u_cfd_symm, "E"),
+            (:u_les, "Filtered DNS"),
         ]
     ) do (key, label)
         s = spectrum(uaid[key], stuff_les, poisson_les)
-        (; s..., label)
-    end
-    fig = Figure(; size  = (500, 380))
-    ax = Axis(fig[1, 1]; xlabel = "k", ylabel = "E(k)", xscale = log10, yscale = log10)
-    # lines!(ax, spec_dns.k, spec_dns.s; label = "DNS")
-    foreach(s -> lines!(ax, s.k, s.s; s.label), spec_les)
+        # args = key == :u_les ? (; linewidth = 5) : (;)
+        args = key == :u_les ? (; linestyle = :dash, color = :black) : (;)
+        key => (; s..., label, args)
+    end |> NamedTuple
+
+    fac = g_les.l / 2π
+
+    # figsize = 500, 380
+    figsize = 420, 340
+    # figsize = 400, 340
+    fig = Figure(; size  = figsize)
+    ax_full = Axis(fig[1, 1];
+        # xlabel = "k", ylabel = "E(k)",
+        xlabel = "Wavenumber", ylabel = "Energy",
+        xscale = log10, yscale = log10)
+
+    tip = spec_les.u_les
+    o = 8
+    ax_zoom = ExactClosure.zoombox!(
+        fig[1, 1],
+        ax_full;
+        point = (tip.k[end-o] * fac, tip.s[end-o]),
+        logx = 1.2,
+        logy = 1.9,
+        relwidth = 0.45,
+        relheight = 0.52,
+    )
+
     kkol = [10^1.0, maximum(spec_les[1].k)]
     ekol =
         if dim(g_les) == 2
@@ -1381,17 +1408,31 @@ plot_spectra(setup, uaid) = let
         else
             1.0e1 * kkol .^ (-5 / 3)
         end
-    # lines!(ax, kkol, ekol)
+
+    for s in spec_les 
+        lines!(ax_full, s.k * fac, s.s; s.label, s.args...)
+        lines!(ax_zoom, s.k * fac, s.s; s.label, s.args...)
+    end
+    # lines!(ax_full, spec_dns.k * fac, spec_dns.s; label = "DNS")
+    # lines!(ax_zoom, spec_dns.k * fac, spec_dns.s; label = "DNS")
+    # lines!(ax_full, kkol * fac, ekol)
+    # lines!(ax_zoom, kkol * fac, ekol)
+
     Legend(
         fig[0, 1],
-        ax;
+        ax_full;
         tellwidth = false,
         orientation = :horizontal,
         nbanks = 1,
         framevisible = false,
     )
-    plotdir = joinpath(@__DIR__, "..")
-    save("$(plotdir)/ns-dnsaid-spectrum.pdf", fig; backend = CairoMakie)
+
+    rowgap!(fig.layout, 10)
+
+    plotdir = joinpath(outdir, "plots") |> mkpath
+    file = "$(plotdir)/ns-dnsaid-spectrum.pdf"
+    @info "Saving spectrum plot to \n$file"
+    save(file, fig; size = figsize, backend = CairoMakie)
     fig
 end
 
@@ -1405,13 +1446,21 @@ function plot_errors(setup, uaid)
         "D",
         "E",
     ]
-    fig = Figure(; size = (400, 300))
-    ax = Axis(fig[1, 1]; xticks = (1:5, labels), ylabel = "Relative error")
     e = [errs...]
     group = 1:5
     bar_labels = map(e) do e
         @sprintf "%.3g" e
     end
+
+    figsize = 400, 300
+
+    fig = Figure(; size = figsize)
+
+    ax = Axis(fig[1, 1]; xticks = (1:5, labels),
+              xlabel = "RST expression",
+              ylabel = "Relative error",
+              )
+
     barplot!(
         ax,
         group,
@@ -1424,9 +1473,15 @@ function plot_errors(setup, uaid)
         #
         # direction = :x,
     )
+    a = maximum(e)
+    @show a
+    ylims!(ax, -0.05 * a, 1.13 * a)
     # ylims!(ax, relerrs[1].e.classic)
-    ylims!(ax, -0.002, 0.065)
-    save("ns-dnsaid-errors.pdf", fig; backend = CairoMakie)
+    # ylims!(ax, -0.002, 0.065)
+
+    plotdir = joinpath(setup.outdir, "plots") |> mkpath
+    file = "$(plotdir)/ns-dnsaid-errors.pdf"
+    save(file, fig; size = figsize, backend = CairoMakie)
     fig
 end
 
